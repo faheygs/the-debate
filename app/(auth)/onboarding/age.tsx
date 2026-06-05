@@ -16,15 +16,19 @@ const AGE_OPTIONS = [
   { value: '45-54', label: '45–54' },
   { value: '55-64', label: '55–64' },
   { value: '65+', label: '65+' },
+  { value: 'prefer_not', label: 'Prefer not to say' },
 ];
 
 export default function AgeScreen() {
   const { data, set } = useOnboarding();
-  const [selected, setSelected] = useState<string | null>(data.age_range ?? null);
+  const [selected, setSelected] = useState<string | null>(
+    data.age_range !== undefined ? (data.age_range === null ? 'prefer_not' : data.age_range) : null,
+  );
 
   function handleContinue() {
     if (!selected) return;
-    set({ age_range: selected });
+    // 'prefer_not' stores null — user chose to skip this field
+    set({ age_range: selected === 'prefer_not' ? null : selected });
     router.push('/(auth)/onboarding/gender');
   }
 

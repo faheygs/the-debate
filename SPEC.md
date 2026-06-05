@@ -1,3 +1,6 @@
+Always read CONTEXT.md first, then SPEC.md, then DESIGN.md before
+starting any work. Update CONTEXT.md at the end of every session.
+
 ## Development Standards
 
 ### Deprecated Packages — Never Use
@@ -128,9 +131,9 @@ The Debate is an anonymous polling platform where users vote on any topic — po
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   phone_hash TEXT UNIQUE NOT NULL,         -- hashed phone, not stored raw
-  age_range TEXT NOT NULL,                 -- '18-24', '25-34', '35-44', '45-54', '55-64', '65+'
+  age_range TEXT,                          -- '18-24', '25-34', '35-44', '45-54', '55-64', '65+' | null if skipped
   gender TEXT,                             -- 'male', 'female', 'nonbinary', 'prefer_not'
-  region TEXT NOT NULL,                    -- country code e.g. 'US', 'GB'
+  region TEXT,                             -- country code e.g. 'US', 'GB' | null if skipped
   region_detail TEXT,                      -- state/province e.g. 'UT', 'CA'
   political_lean INTEGER,                  -- -2 to +2 (-2=very liberal, 0=moderate, +2=very conservative)
   income_bracket TEXT,                     -- 'under_30k', '30-60k', '60-100k', '100-150k', '150k+'
@@ -149,7 +152,9 @@ CREATE TABLE polls (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   question TEXT NOT NULL,
   category TEXT NOT NULL,                  -- see category list below
-  poll_type TEXT DEFAULT 'binary',         -- 'binary' (agree/disagree) | 'scale' (1-5)
+  poll_type TEXT DEFAULT 'binary',         -- 'binary' (agree/disagree) | 'scale' (1-5) | 'versus' (option_a vs option_b)
+  option_a TEXT,                           -- first option label for versus polls (e.g. "Be invisible")
+  option_b TEXT,                           -- second option label for versus polls (e.g. "Be able to fly")
   submitted_by UUID REFERENCES users(id),
   status TEXT DEFAULT 'pending',           -- 'pending' | 'live' | 'closed' | 'rejected'
   upvote_count INTEGER DEFAULT 0,          -- community upvotes while pending

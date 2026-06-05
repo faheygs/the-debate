@@ -164,6 +164,11 @@ export default function RegionScreen() {
     router.push('/(auth)/onboarding/politics');
   }
 
+  function handleSkip() {
+    set({ region: null, region_detail: null });
+    router.push('/(auth)/onboarding/politics');
+  }
+
   const canContinue = !subregions.length || regionDetail !== null;
 
   return (
@@ -209,6 +214,11 @@ export default function RegionScreen() {
           >
             <ThemedText style={styles.buttonText}>Continue</ThemedText>
           </TouchableOpacity>
+          <TouchableOpacity onPress={handleSkip} activeOpacity={0.7}>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.skip}>
+              Skip
+            </ThemedText>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
 
@@ -246,13 +256,17 @@ const styles = StyleSheet.create({
     marginTop: 'auto',
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
+    gap: Spacing.two,
+    alignItems: 'center',
   },
+  skip: { textAlign: 'center' },
   button: {
     height: 52,
     borderRadius: 12,
     backgroundColor: '#208AEF',
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'stretch',
   },
   buttonDisabled: { opacity: 0.35 },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },

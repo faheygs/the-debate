@@ -11,27 +11,58 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ProgressBar } from '@/components/onboarding/ProgressBar';
+import { VoteButtons } from '@/components/poll/VoteButtons';
 import { useOnboarding } from '@/hooks/useOnboarding';
-import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import type { PollType } from '@/types/app';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TOUR_FLAG } from './welcome-tour';
 
-const SEED_POLLS = [
-  { question: 'Is pineapple acceptable on pizza?', category: 'culture' },
-  { question: 'Should the voting age be lowered to 16?', category: 'politics' },
-  { question: "Is it ever okay to lie to protect someone's feelings?", category: 'ethics' },
-  { question: 'Would you rather have more money or more time?', category: 'hypothetical' },
-  { question: 'Should there be a 4-day work week?', category: 'culture' },
+type SeedPollData = {
+  question: string;
+  category: string;
+  pollType: PollType;
+  optionA?: string;
+  optionB?: string;
+};
+
+const SEED_POLLS: SeedPollData[] = [
+  {
+    question: 'Is pineapple acceptable on pizza?',
+    category: 'culture',
+    pollType: 'binary',
+  },
+  {
+    question: 'Should the voting age be lowered to 16?',
+    category: 'politics',
+    pollType: 'binary',
+  },
+  {
+    question: "Is it ever okay to lie to protect someone's feelings?",
+    category: 'ethics',
+    pollType: 'binary',
+  },
+  {
+    question: 'Would you rather have more money or more time?',
+    category: 'hypothetical',
+    pollType: 'versus',
+    optionA: 'More money',
+    optionB: 'More time',
+  },
+  {
+    question: 'Should there be a 4-day work week?',
+    category: 'culture',
+    pollType: 'binary',
+  },
 ];
 
 type Vote = 1 | -1;
 
 export default function CompleteScreen() {
-  const theme = useTheme();
   const { data } = useOnboarding();
-  const { user } = useAuth();
   const [votes, setVotes] = useState<Record<number, Vote>>({});
+  const [showPolls, setShowPolls] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,30 +71,58 @@ export default function CompleteScreen() {
   }
 
   async function handleGetStarted() {
-    if (!user) return;
     setSubmitting(true);
     setError(null);
 
-    const { error: insertError } = await supabase.from('users').insert({
-      id: user.id,
-      phone_hash: `email:${user.id}`,
-      age_range: data.age_range ?? '18-24',
+    // Always get a fresh session — never rely on stale context
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !session?.user) {
+      console.error('[complete] No active session:', sessionError);
+      setError('Session expired. Please sign in again.');
+      setSubmitting(false);
+      return;
+    }
+
+    const userId = session.user.id;
+
+    const payload = {
+      id: userId,
+      phone_hash: `email:${userId}`,
+      age_range: data.age_range ?? null,
       gender: data.gender ?? null,
-      region: data.region ?? 'US',
+      region: data.region ?? null,
       region_detail: data.region_detail ?? null,
-      political_lean: data.political_lean ?? 0,
+      political_lean: data.political_lean ?? null,
       income_bracket: data.income_bracket ?? null,
       education_level: data.education_level ?? null,
-    });
+    };
+
+    console.log('[complete] Inserting user row:', JSON.stringify(payload, null, 2));
+
+    const { error: insertError } = await supabase.from('users').insert(payload);
 
     setSubmitting(false);
 
     if (insertError) {
-      setError('Something went wrong. Please try again.');
+      console.error('[complete] Insert failed — code:', insertError.code);
+      console.error('[complete] message:', insertError.message);
+      console.error('[complete] details:', insertError.details);
+      console.error('[complete] hint:', insertError.hint);
+
+      // Duplicate key: user row already exists (e.g. retry after a crash)
+      if (insertError.code === '23505') {
+        console.log('[complete] User row already exists — checking tour flag');
+        const seenTour = await AsyncStorage.getItem(TOUR_FLAG);
+        router.replace(seenTour === 'true' ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
+        return;
+      }
+
+      setError(`Setup failed (${insertError.code ?? 'unknown'}): ${insertError.message}`);
       return;
     }
 
-    router.replace('/(tabs)');
+    router.replace('/(auth)/onboarding/welcome-tour');
   }
 
   return (
@@ -85,21 +144,33 @@ export default function CompleteScreen() {
             </ThemedText>
           </View>
 
-          <ThemedText type="default" style={styles.pollsLabel}>
-            Cast your first votes:
-          </ThemedText>
-
-          <View style={styles.polls}>
-            {SEED_POLLS.map((poll, i) => (
-              <SeedPollCard
-                key={i}
-                question={poll.question}
-                category={poll.category}
-                vote={votes[i] ?? null}
-                onVote={v => toggleVote(i, v)}
-              />
-            ))}
+          <View style={styles.pollsHeader}>
+            <ThemedText type="default" style={styles.pollsLabel}>
+              Cast your first votes:
+            </ThemedText>
+            <TouchableOpacity onPress={() => setShowPolls(v => !v)} activeOpacity={0.7}>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.pollsToggle}>
+                {showPolls ? 'Skip' : 'Show'}
+              </ThemedText>
+            </TouchableOpacity>
           </View>
+
+          {showPolls && (
+            <View style={styles.polls}>
+              {SEED_POLLS.map((poll, i) => (
+                <SeedPollCard
+                  key={i}
+                  question={poll.question}
+                  category={poll.category}
+                  pollType={poll.pollType}
+                  optionA={poll.optionA}
+                  optionB={poll.optionB}
+                  vote={votes[i] ?? null}
+                  onVote={v => toggleVote(i, v)}
+                />
+              ))}
+            </View>
+          )}
 
           {error ? (
             <ThemedText type="small" style={styles.error}>{error}</ThemedText>
@@ -128,52 +199,27 @@ export default function CompleteScreen() {
 type SeedPollCardProps = {
   question: string;
   category: string;
+  pollType: PollType;
+  optionA?: string;
+  optionB?: string;
   vote: Vote | null;
   onVote: (v: Vote) => void;
 };
 
-function SeedPollCard({ question, category, vote, onVote }: SeedPollCardProps) {
-  const theme = useTheme();
+function SeedPollCard({ question, category, pollType, optionA, optionB, vote, onVote }: SeedPollCardProps) {
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedText type="small" themeColor="textSecondary" style={styles.cardCategory}>
         {category.toUpperCase()}
       </ThemedText>
       <ThemedText type="default" style={styles.cardQuestion}>{question}</ThemedText>
-      <View style={styles.voteRow}>
-        <TouchableOpacity
-          style={[
-            styles.voteBtn,
-            { borderColor: vote === 1 ? '#208AEF' : theme.backgroundSelected },
-            vote === 1 && styles.voteBtnAgree,
-          ]}
-          onPress={() => onVote(1)}
-          activeOpacity={0.75}
-        >
-          <ThemedText
-            type="small"
-            style={[styles.voteBtnText, { color: vote === 1 ? '#fff' : theme.text }]}
-          >
-            AGREE
-          </ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.voteBtn,
-            { borderColor: vote === -1 ? '#FF453A' : theme.backgroundSelected },
-            vote === -1 && styles.voteBtnDisagree,
-          ]}
-          onPress={() => onVote(-1)}
-          activeOpacity={0.75}
-        >
-          <ThemedText
-            type="small"
-            style={[styles.voteBtnText, { color: vote === -1 ? '#fff' : theme.text }]}
-          >
-            DISAGREE
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
+      <VoteButtons
+        pollType={pollType}
+        optionA={optionA}
+        optionB={optionB}
+        userVote={vote}
+        onVote={onVote}
+      />
     </ThemedView>
   );
 }
@@ -191,11 +237,15 @@ const styles = StyleSheet.create({
   },
   headline: { textAlign: 'center' },
   subline: { textAlign: 'center' },
-  pollsLabel: {
+  pollsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.four,
-    fontWeight: '600',
     marginTop: Spacing.two,
   },
+  pollsLabel: { fontWeight: '600' },
+  pollsToggle: { paddingLeft: Spacing.three },
   polls: { gap: Spacing.two, paddingHorizontal: Spacing.four },
   card: {
     borderRadius: 14,
@@ -204,19 +254,7 @@ const styles = StyleSheet.create({
   },
   cardCategory: { letterSpacing: 0.8 },
   cardQuestion: { fontWeight: '600', lineHeight: 22 },
-  voteRow: { flexDirection: 'row', gap: Spacing.two },
-  voteBtn: {
-    flex: 1,
-    height: 40,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  voteBtnAgree: { backgroundColor: '#208AEF', borderColor: '#208AEF' },
-  voteBtnDisagree: { backgroundColor: '#FF453A', borderColor: '#FF453A' },
-  voteBtnText: { fontWeight: '700', fontSize: 13, letterSpacing: 0.5 },
-  error: { color: '#FF453A', textAlign: 'center', paddingHorizontal: Spacing.four },
+  error: { color: '#F43F5E', textAlign: 'center', paddingHorizontal: Spacing.four },
   footer: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,

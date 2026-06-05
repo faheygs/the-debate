@@ -1,1 +1,158 @@
-﻿// placeholder
+// Database types for The Debate — matches schema in supabase/migrations/
+
+export type PollType = "binary" | "scale" | "versus";
+export type PollStatus = "pending" | "live" | "closed" | "rejected";
+export type AiDecision = "approved" | "blocked";
+
+// ── Tables ────────────────────────────────────────────────────────────────
+
+export interface DbUser {
+  id: string;
+  phone_hash: string;
+  age_range: string | null;
+  gender: string | null;
+  region: string | null;
+  region_detail: string | null;
+  political_lean: number | null;
+  income_bracket: string | null;
+  education_level: string | null;
+  comment_strikes: number;
+  comment_banned: boolean;
+  created_at: string;
+  last_active_at: string;
+}
+
+export interface DbPoll {
+  id: string;
+  question: string;
+  category: string;
+  poll_type: PollType;
+  option_a: string | null;
+  option_b: string | null;
+  submitted_by: string | null;
+  status: PollStatus;
+  upvote_count: number;
+  is_evergreen: boolean;
+  expires_at: string | null;
+  created_at: string;
+  promoted_at: string | null;
+  closed_at: string | null;
+}
+
+export interface DbVote {
+  id: string;
+  poll_id: string;
+  user_id: string;
+  value: number; // binary: 1=agree, -1=disagree | scale: 1–5
+  created_at: string;
+}
+
+export interface DbVoteCount {
+  poll_id: string;
+  yes_count: number;
+  no_count: number;
+  total_count: number;
+  last_synced_at: string;
+}
+
+export interface DbComment {
+  id: string;
+  poll_id: string;
+  user_id: string;
+  content: string;
+  ai_decision: AiDecision;
+  ai_reason: string | null;
+  ai_score: number | null;
+  created_at: string;
+}
+
+export interface DbCommentFlag {
+  id: string;
+  comment_id: string;
+  flagged_by: string;
+  created_at: string;
+}
+
+export interface DbPollUpvote {
+  poll_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+export interface DbUserInsight {
+  user_id: string;
+  worldview_summary: string | null;
+  contrarian_score: number | null;
+  top_categories: Record<string, number> | null;
+  political_actual: number | null;
+  demographic_match: Record<string, unknown> | null;
+  insights_data: Record<string, unknown> | null;
+  last_generated_at: string | null;
+  vote_count_at_generation: number | null;
+}
+
+// ── API response shapes (returned by Edge Functions) ─────────────────────
+
+export interface PollWithCounts extends DbPoll {
+  yes_count: number;
+  no_count: number;
+  total_count: number;
+}
+
+export interface FeedResponse {
+  polls: PollWithCounts[];
+  cursor: string | null;
+  has_more: boolean;
+}
+
+export interface CastVoteResponse {
+  success: true;
+  yes_count: number;
+  no_count: number;
+  total: number;
+}
+
+export interface DemographicBreakdownGroup {
+  yes_pct: number;
+  total: number;
+}
+
+export interface DemographicBreakdown {
+  age: Record<string, DemographicBreakdownGroup>;
+  region: Record<string, DemographicBreakdownGroup>;
+  politics: Record<string, DemographicBreakdownGroup>;
+  gender: Record<string, DemographicBreakdownGroup>;
+}
+
+export interface PublicComment {
+  id: string;
+  content: string;
+  created_at: string;
+}
+
+export interface PollDetailResponse {
+  poll: DbPoll;
+  yes_count: number;
+  no_count: number;
+  total_count: number;
+  user_vote: number | null;
+  demographic_breakdown: DemographicBreakdown;
+  comments: PublicComment[];
+}
+
+// ── Database helper type (for supabase client generics) ───────────────────
+
+export interface Database {
+  public: {
+    Tables: {
+      users: { Row: DbUser; Insert: Omit<DbUser, "comment_strikes" | "comment_banned" | "created_at" | "last_active_at">; Update: Partial<DbUser> };
+      polls: { Row: DbPoll; Insert: Omit<DbPoll, "id" | "upvote_count" | "created_at">; Update: Partial<DbPoll> };
+      votes: { Row: DbVote; Insert: Omit<DbVote, "id" | "created_at">; Update: never };
+      vote_counts: { Row: DbVoteCount; Insert: DbVoteCount; Update: Partial<DbVoteCount> };
+      comments: { Row: DbComment; Insert: Omit<DbComment, "id" | "created_at">; Update: Partial<DbComment> };
+      comment_flags: { Row: DbCommentFlag; Insert: Omit<DbCommentFlag, "id" | "created_at">; Update: never };
+      poll_upvotes: { Row: DbPollUpvote; Insert: Omit<DbPollUpvote, "created_at">; Update: never };
+      user_insights: { Row: DbUserInsight; Insert: DbUserInsight; Update: Partial<DbUserInsight> };
+    };
+  };
+}

@@ -1,33 +1,46 @@
 import { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
-import { useAuth } from '@/hooks/useAuth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
+import { TOUR_FLAG } from './(auth)/onboarding/welcome-tour';
+
+type AppRoute =
+  | '/(auth)/auth'
+  | '/(auth)/onboarding/age'
+  | '/(auth)/onboarding/welcome-tour'
+  | '/(tabs)';
 
 export default function IndexScreen() {
-  const { session, loading } = useAuth();
-  const [checkingUser, setCheckingUser] = useState(true);
-  const [hasUserRow, setHasUserRow] = useState(false);
+  const [route, setRoute] = useState<AppRoute | null>(null);
 
   useEffect(() => {
-    if (loading) return;
-    if (!session) {
-      setCheckingUser(false);
-      return;
+    async function resolveRoute() {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        setRoute('/(auth)/auth');
+        return;
+      }
+
+      const { data: userRow } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', session.user.id)
+        .maybeSingle();
+
+      if (!userRow) {
+        setRoute('/(auth)/onboarding/age');
+        return;
+      }
+
+      // User has an account — check if they've seen the welcome tour
+      const seenTour = await AsyncStorage.getItem(TOUR_FLAG);
+      setRoute(seenTour === 'true' ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
     }
 
-    supabase
-      .from('users')
-      .select('id')
-      .eq('id', session.user.id)
-      .maybeSingle()
-      .then(({ data }) => {
-        setHasUserRow(!!data);
-        setCheckingUser(false);
-      });
-  }, [session, loading]);
+    resolveRoute();
+  }, []); // runs once on mount — Expo splash screen covers the blank state
 
-  if (loading || checkingUser) return null;
-  if (!session) return <Redirect href="/(auth)/auth" />;
-  if (!hasUserRow) return <Redirect href="/(auth)/onboarding/age" />;
-  return <Redirect href="/(tabs)" />;
+  if (!route) return null;
+  return <Redirect href={route} />;
 }

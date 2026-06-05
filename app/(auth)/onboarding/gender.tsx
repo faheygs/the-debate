@@ -18,11 +18,14 @@ const GENDER_OPTIONS = [
 
 export default function GenderScreen() {
   const { data, set } = useOnboarding();
-  const [selected, setSelected] = useState<string | null>(data.gender ?? null);
+  const [selected, setSelected] = useState<string | null>(
+    data.gender !== undefined ? (data.gender === null ? 'prefer_not' : data.gender) : null,
+  );
 
   function handleContinue() {
     if (!selected) return;
-    set({ gender: selected });
+    // 'prefer_not' stores null — user chose to skip this field
+    set({ gender: selected === 'prefer_not' ? null : selected });
     router.push('/(auth)/onboarding/region');
   }
 
