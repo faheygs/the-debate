@@ -17,6 +17,9 @@
 - Before installing any package, confirm it is actively maintained and not deprecated
 - Use `uuid@11` if uuid is ever needed
 
+Read DESIGN.md alongside SPEC.md before writing any UI code.
+All components must follow DESIGN.md exactly.
+
 # The Debate — Full Technical Specification
 
 > A real-time anonymous polling and debate platform where the world votes, you see where you stand, and your identity stays private.

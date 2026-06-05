@@ -1,0 +1,2 @@
+-- Seed polls placeholder — 50 starter polls across all categories
+-- Will be populated in Phase 10
