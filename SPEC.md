@@ -1,3 +1,22 @@
+## Development Standards
+
+### Deprecated Packages — Never Use
+
+- `uuid` below v11 — use `crypto.randomUUID()` natively instead
+- `lodash.get` — use optional chaining `?.` operator instead
+- `rimraf` below v4
+- `glob` below v11
+- `inflight`
+- `@xmldom/xmldom` below v1.0
+
+### General Rules
+
+- Always use the latest stable version of any package
+- Prefer native JavaScript/TypeScript solutions over packages where possible
+  (e.g. `crypto.randomUUID()` over uuid, `?.` over lodash.get)
+- Before installing any package, confirm it is actively maintained and not deprecated
+- Use `uuid@11` if uuid is ever needed
+
 # The Debate — Full Technical Specification
 
 > A real-time anonymous polling and debate platform where the world votes, you see where you stand, and your identity stays private.
@@ -633,8 +652,7 @@ ${recentPolls.map((p) => `- "${p.question}"`).join("\n")}`,
 app/
   (auth)/
     _layout.tsx
-    welcome.tsx          — splash + phone number entry
-    verify.tsx           — OTP verification
+    auth.tsx             — email + password sign in / sign up
     onboarding/
       age.tsx            — age range selection
       gender.tsx         — gender selection
@@ -729,10 +747,9 @@ components/
 ### Auth Flow
 
 ```
-1. Enter phone number
-2. Receive SMS OTP via Supabase Auth (Twilio)
-3. Verify OTP → Supabase session created
-4. Check if user exists in users table:
+1. Enter email + password
+2. Supabase creates session instantly (no email confirmation)
+3. Check if user exists in users table:
    - No → redirect to onboarding
    - Yes → redirect to feed
 ```
