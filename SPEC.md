@@ -943,31 +943,65 @@ const token = await Notifications.getExpoPushTokenAsync();
 ```bash
 # Supabase
 EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=        # Edge Functions only, never client
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=     # sb_publishable_xxx — safe for client
 
 # Upstash Redis
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
 
-# Anthropic
-ANTHROPIC_API_KEY=                # Edge Functions only, never client
-
 # Expo
 EXPO_PUBLIC_APP_ENV=development|production
 ```
 
-### Supabase Edge Function Environment
+### Supabase Edge Function Secrets
 
-All secret keys (Supabase service role, Upstash, Anthropic) live only in Supabase Edge Function secrets. Never in the client app.
+All secret keys live only in Supabase Edge Function secrets. Never in the client app.
 
 ```bash
+supabase secrets set SUPABASE_SECRET_KEY=sb_secret_xxx
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 supabase secrets set UPSTASH_REDIS_REST_URL=https://...
 supabase secrets set UPSTASH_REDIS_REST_TOKEN=...
 ```
 
+### Getting Your Keys
+
+- Supabase dashboard → Settings → API Keys tab
+- Click "Create new API Keys" if not already created
+- Publishable key → client app (.env)
+- Secret key → Edge Function secrets only
+
+### Supabase CLI Setup
+
+```bash
+brew install supabase/tap/supabase
+supabase login
+supabase init        # run in repo root
+supabase link --project-ref YOUR_PROJECT_REF
+```
+
+### lib/supabase.ts
+
+```typescript
+import "expo-sqlite/localStorage/install";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
+
+export const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    storage: localStorage,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+});
+```
+
 ### Project Structure
+
+... (rest of section unchanged)
 
 ```
 the-debate/
