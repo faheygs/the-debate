@@ -27,6 +27,7 @@ interface PollWithCounts extends PollRow {
   yes_count: number;
   no_count: number;
   total_count: number;
+  velocity: number;
 }
 
 Deno.serve(async (req) => {
@@ -91,11 +92,14 @@ Deno.serve(async (req) => {
 
     const enriched: PollWithCounts[] = await Promise.all(
       pagePolls.map(async (poll) => {
-        const [redisYes, redisNo, redisTotal] = await Promise.all([
+        const [redisYes, redisNo, redisTotal, redisVelocity] = await Promise.all([
           redis.get<number>(`poll:${poll.id}:yes`),
           redis.get<number>(`poll:${poll.id}:no`),
           redis.get<number>(`poll:${poll.id}:total`),
+          redis.get<number>(`poll:${poll.id}:velocity`),
         ]);
+
+        const velocity = Number(redisVelocity ?? 0);
 
         if (redisTotal !== null) {
           return {
@@ -103,6 +107,7 @@ Deno.serve(async (req) => {
             yes_count: Number(redisYes ?? 0),
             no_count: Number(redisNo ?? 0),
             total_count: Number(redisTotal),
+            velocity,
           };
         }
 
@@ -117,6 +122,7 @@ Deno.serve(async (req) => {
           yes_count: vc?.yes_count ?? 0,
           no_count: vc?.no_count ?? 0,
           total_count: vc?.total_count ?? 0,
+          velocity,
         };
       }),
     );

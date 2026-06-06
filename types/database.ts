@@ -97,6 +97,7 @@ export interface PollWithCounts extends DbPoll {
   yes_count: number;
   no_count: number;
   total_count: number;
+  velocity?: number;
 }
 
 export interface FeedResponse {

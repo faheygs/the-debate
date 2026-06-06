@@ -46,21 +46,15 @@ routing fixes, font loading, colour system, submit screen form, sign out.
 Edge Functions built, Redis vote pipeline wired, Realtime broadcasting, 50 seed polls,
 database permissions migration, Realtime helper, full database types.
 
-### 🔜 Phase 4 — Feed UI (next up)
+### ✅ Phase 4 — Feed UI (complete)
 
-Build the live feed screen. Phase 3 backend is ready to power it.
+Live feed screen with animated vote bars, optimistic voting, realtime subscriptions,
+infinite scroll, skeleton loading, and all DESIGN.md spec met.
 
-What Phase 4 covers (from SPEC.md section 16):
-- FeedScreen + FeedList with FlatList and viewport tracking
-- PollCard component with animated vote bar (DESIGN.md spec)
-- Optimistic vote UI — bar animates immediately on tap
-- Realtime subscription hook (feed:global + poll:id channels)
-- Feed mode tabs (trending / fresh / closest)
-- Infinite scroll with cursor pagination
+### 🔜 Phase 5 — Poll Detail (next up)
 
 ### Not started
 
-- [ ] Phase 5 — Poll Detail
 - [ ] Phase 6 — Comments + Moderation
 - [ ] Phase 7 — Submit Poll (form UI exists; edge function not built)
 - [ ] Phase 8 — Personal Board (sign out button is placeholder)
@@ -105,17 +99,27 @@ What Phase 4 covers (from SPEC.md section 16):
 
 - `components/onboarding/ProgressBar.tsx`, `OptionGrid.tsx`, `PoliticsSlider.tsx`
 - `components/poll/VoteButtons.tsx` — binary + versus types, locked post-vote
-- `components/poll/PollCard.tsx` — minimal card (Phase 4 will fully build this out)
+- `components/poll/PollCard.tsx` — minimal card (kept for Phase 5 reuse)
+- `components/feed/PollCard.tsx` — full feed card: category/status badges, animated vote bar, enter animation, optimistic vote
+- `components/feed/FeedList.tsx` — FlatList wrapper, viewport tracking, per-poll Realtime subs (max 5)
+- `components/feed/FeedModeTabs.tsx` — scrollable mode pill tabs
+- `components/feed/PollCardSkeleton.tsx` — shimmer skeleton (opacity loop 0.4→0.8→0.4)
+- `components/shared/Toast.tsx` — slide-up toast, auto-dismiss 3s, success/error/info variants
+- `components/shared/EmptyState.tsx` — icon + heading + subtext
+- `components/shared/VoteCount.tsx` — formatted count with scale-pulse animation + formatVoteCount()
 
 ### Libraries / Hooks
 
 - `hooks/useAuth.ts`, `hooks/useOnboarding.ts`
+- `hooks/useFeed.ts` — feed state, fetchFeed, loadMore, refresh, switchMode, updatePollCounts
+- `hooks/useVote.ts` — optimistic castVote, revert on failure, per-poll vote tracking
 - `lib/supabase.ts` — Supabase client
 - `lib/redis.ts` — Upstash Redis client
+- `lib/api.ts` — fetchFeed, castVote, fetchPoll (all auto-attach JWT from supabase.auth.getSession)
 - `lib/realtime.ts` — subscribeToFeed, subscribeToPoll, subscribeToPollComments, subscribeToUserPrivate, unsubscribeAll
 - `constants/colors.ts` — full DESIGN.md token system + useColors() hook
 - `types/app.ts` — OnboardingData, Poll, PollType
-- `types/database.ts` — complete DB types: DbUser, DbPoll, DbVote, DbVoteCount, DbComment, PollDetailResponse, FeedResponse, etc.
+- `types/database.ts` — complete DB types including PollWithCounts (now includes optional velocity field)
 
 ### Database
 
@@ -269,3 +273,19 @@ What Phase 4 covers (from SPEC.md section 16):
 - `supabase/functions/background-sync/index.ts`: Redis→vote_counts UPSERT + vote queue drain
 - `lib/realtime.ts`: channel helpers for feed, poll, comments, user private channels
 - `types/database.ts`: complete TypeScript types for all tables + Edge Function response shapes
+
+### Session 8 — Phase 4: Feed UI
+
+- `lib/api.ts`: fetchFeed, castVote, fetchPoll — all auto-attach JWT via supabase.auth.getSession()
+- `hooks/useFeed.ts`: feed state management — mode, polls, loading, pagination, realtime count updates
+- `hooks/useVote.ts`: optimistic vote with revert on failure, per-poll voted state
+- `components/feed/PollCard.tsx`: full card per DESIGN.md — category/status badges, animated spring vote bar, enter animation staggered by index
+- `components/feed/FeedList.tsx`: FlatList with viewability tracking, max 5 active poll Realtime subs
+- `components/feed/FeedModeTabs.tsx`: scrollable pill tabs (Trending / Closest / Fresh / For You)
+- `components/feed/PollCardSkeleton.tsx`: shimmer skeleton matching PollCard layout
+- `components/shared/Toast.tsx`: slide-up toast, 3s auto-dismiss, success/error/info
+- `components/shared/EmptyState.tsx`: icon + Syne heading + DM Sans subtext
+- `components/shared/VoteCount.tsx`: formatted count with scale-pulse on change
+- `app/(tabs)/index.tsx`: full feed screen — header, mode tabs, FeedList, feed:global Realtime, Toast
+- `supabase/functions/feed/index.ts`: added velocity field to response (fetched from Redis poll:{id}:velocity)
+- `types/database.ts`: added optional velocity to PollWithCounts
