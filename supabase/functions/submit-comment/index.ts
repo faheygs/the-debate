@@ -1,11 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Redis } from "npm:@upstash/redis";
-import Anthropic from "npm:@anthropic-ai/sdk";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const COMMENT_TTL = 60 * 60 * 24 * 30; // 30 days
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -14,6 +15,8 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return json({ error: "Method not allowed" }, 405);
   }
+
+  const start = Date.now();
 
   try {
     // ── Auth ──────────────────────────────────────────────────────────────
@@ -44,111 +47,75 @@ Deno.serve(async (req) => {
     }
     const trimmedContent = content.trim();
 
-    // ── User checks: ban + duplicate ──────────────────────────────────────
-    const { data: userRow } = await supabase
-      .from("users")
-      .select("comment_banned, age_range, region_detail, political_lean")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (userRow?.comment_banned) {
-      return json({ error: "You have been banned from commenting" }, 403);
-    }
-
-    // Check DB for existing comment
-    const { data: existing } = await supabase
-      .from("comments")
-      .select("id")
-      .eq("poll_id", poll_id)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (existing) {
-      return json({ error: "You have already commented on this poll" }, 409);
-    }
-
-    // Redis fast-path duplicate gate
     const redis = new Redis({
       url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
     });
+
     const redisKey = `user:${userId}:commented:${poll_id}`;
-    const alreadyCommented = await redis.get(redisKey).catch(() => null);
-    if (alreadyCommented) {
+
+    // ── Parallel: ban check + DB duplicate + Redis duplicate ──────────────
+    const [userRow, existingComment, alreadyCommentedRedis] = await Promise.all([
+      supabase
+        .from("users")
+        .select("comment_banned, age_range, region_detail, political_lean")
+        .eq("id", userId)
+        .maybeSingle()
+        .then(({ data }) => data),
+      supabase
+        .from("comments")
+        .select("id")
+        .eq("poll_id", poll_id)
+        .eq("user_id", userId)
+        .maybeSingle()
+        .then(({ data }) => data),
+      redis.get(redisKey).catch(() => null),
+    ]);
+
+    console.log(`[submit-comment] checks done in ${Date.now() - start}ms`);
+
+    if (userRow?.comment_banned) {
+      return json({ error: "You have been banned from commenting" }, 403);
+    }
+    if (existingComment || alreadyCommentedRedis) {
       return json({ error: "You have already commented on this poll" }, 409);
     }
 
-    // ── Fetch poll question for moderation context ────────────────────────
-    const { data: poll } = await supabase
-      .from("polls")
-      .select("question")
-      .eq("id", poll_id)
-      .maybeSingle();
+    // TODO: Re-enable Claude moderation after beta testing
+    // See SPEC.md section 6.1 for the full moderation prompt
+    const aiDecision: "approved" | "blocked" = "approved";
+    const aiReason: string | null = null;
+    const aiScore: number | null = 0.0;
 
-    if (!poll) {
-      return json({ error: "Poll not found" }, 404);
-    }
+    // ── Insert approved comment ───────────────────────────────────────────
+    const insertPayload = {
+      poll_id,
+      user_id: userId,
+      content: trimmedContent,
+      ai_decision: aiDecision,
+      ai_reason: aiReason,
+      ai_score: aiScore,
+    };
+    console.log("[submit-comment] Inserting comment:", JSON.stringify(insertPayload));
 
-    // ── Claude moderation ─────────────────────────────────────────────────
-    let aiDecision: "approved" | "blocked" = "approved";
-    let aiReason: string | null = null;
-    let aiScore: number | null = null;
-
-    try {
-      const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
-      const moderationResponse = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 200,
-        system: `You are a content moderator for a public anonymous debate platform.
-BLOCK if: slurs/hate speech, personal attacks, off-topic, threats, spam.
-APPROVE if: opinion related to poll, substantive even if strongly worded.
-Respond ONLY with valid JSON: { "decision": "approve"|"block", "reason": "...", "score": 0.0-1.0 }`,
-        messages: [{
-          role: "user",
-          content: `Poll question: "${poll.question}"\nUser comment: "${trimmedContent}"`,
-        }],
-      });
-
-      const raw = moderationResponse.content[0].type === "text"
-        ? moderationResponse.content[0].text
-        : "";
-      const parsed = JSON.parse(raw);
-      aiDecision = parsed.decision === "block" ? "blocked" : "approved";
-      aiReason = parsed.reason ?? null;
-      aiScore = typeof parsed.score === "number" ? parsed.score : null;
-    } catch (moderationErr) {
-      // Fail open: if moderation errors, approve the comment
-      console.warn("[submit-comment] Moderation failed, failing open:", moderationErr);
-      aiDecision = "approved";
-    }
-
-    // ── Insert comment ────────────────────────────────────────────────────
     const { data: inserted, error: insertError } = await supabase
       .from("comments")
-      .insert({
-        poll_id,
-        user_id: userId,
-        content: trimmedContent,
-        ai_decision: aiDecision,
-        ai_reason: aiReason,
-        ai_score: aiScore,
-      })
+      .insert(insertPayload)
       .select("id, content, created_at")
       .single();
 
     if (insertError || !inserted) {
-      console.error("[submit-comment] Insert failed:", insertError);
-      return json({ error: "Failed to save comment" }, 500);
+      console.error("[submit-comment] Insert failed — full error:", JSON.stringify(insertError));
+      console.error("[submit-comment] Insert failed — code:", insertError?.code, "message:", insertError?.message, "details:", insertError?.details, "hint:", insertError?.hint);
+      return json({ error: insertError?.message ?? "Failed to save comment", code: insertError?.code }, 500);
     }
 
-    if (aiDecision === "blocked") {
-      return json({ approved: false });
-    }
+    console.log(`[submit-comment] insert done in ${Date.now() - start}ms`);
 
-    // ── Mark as commented in Redis (30-day TTL) ───────────────────────────
-    redis.set(redisKey, "1", { ex: 60 * 60 * 24 * 30 }).catch(() => {});
+    // ── Mark as commented in Redis (fire-and-forget) ──────────────────────
+    redis.set(redisKey, "1", { ex: COMMENT_TTL }).catch(() => {});
 
-    // ── Broadcast via Realtime ────────────────────────────────────────────
+    // ── Broadcast via Realtime (fire-and-forget) ──────────────────────────
     const broadcastPayload = {
       comment: {
         id: inserted.id,
@@ -164,10 +131,12 @@ Respond ONLY with valid JSON: { "decision": "approve"|"block", "reason": "...", 
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
     );
-    await broadcastClient
+    broadcastClient
       .channel(`poll:${poll_id}:comments`)
       .send({ type: "broadcast", event: "new_comment", payload: broadcastPayload })
       .catch((e: unknown) => console.warn("[submit-comment] broadcast failed:", e));
+
+    console.log(`[submit-comment] done in ${Date.now() - start}ms`);
 
     return json({ approved: true, comment: broadcastPayload.comment });
   } catch (err) {
@@ -179,6 +148,10 @@ Respond ONLY with valid JSON: { "decision": "approve"|"block", "reason": "...", 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: {
+      ...CORS,
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
 }

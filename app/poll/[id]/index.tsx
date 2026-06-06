@@ -22,7 +22,6 @@ import { formatVoteCount } from '@/components/shared/VoteCount';
 import { usePollDetail } from '@/hooks/usePollDetail';
 import { useVote } from '@/hooks/useVote';
 import { usePollState } from '@/contexts/PollStateContext';
-import type { PublicComment } from '@/types/database';
 
 // ── Category badge colors ─────────────────────────────────────────────────────
 
@@ -124,12 +123,13 @@ export default function PollDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
   const isDark = useColorScheme() === 'dark';
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: 'error' | 'info'; duration?: number } | null>(null);
   const pollCtx = usePollState();
 
-  const showError = useCallback((msg: string) => setToast(msg), []);
+  const showError = useCallback((msg: string) => setToast({ message: msg, variant: 'error' }), []);
+  const showBlocked = useCallback((msg: string) => setToast({ message: msg, variant: 'error', duration: 4000 }), []);
 
-  const { data, loading, error, updateCounts, addComment } = usePollDetail(id);
+  const { data, loading, error, updateCounts, addOptimisticComment, confirmComment, removeComment } = usePollDetail(id);
 
   const currentVoteRef = useRef<1 | -1 | null>(null);
 
@@ -161,10 +161,6 @@ export default function PollDetailScreen() {
     currentVoteRef.current = value;
     pollCtx.markPollVoted(id, value);
     vote(id, value, data.yes_count, data.no_count, data.total_count);
-  }
-
-  function handleCommentAdded(comment: PublicComment) {
-    addComment(comment);
   }
 
   const poll = data?.poll;
@@ -284,28 +280,59 @@ export default function PollDetailScreen() {
                 </TouchableOpacity>
               )}
 
+              {/* "Your voice" — shown above Voices once the user has commented */}
+              {data.has_commented && data.user_comment ? (
+                <View style={[styles.yourVoiceCard, { borderColor: colors.primary }]}>
+                  <Text style={[styles.yourVoiceLabel, { color: colors.textTertiary }]}>
+                    Your voice
+                  </Text>
+                  <Text style={[styles.yourVoiceText, { color: colors.textSecondary }]}>
+                    {data.user_comment}
+                  </Text>
+                </View>
+              ) : null}
+
               {/* Voices (comments) */}
               <CommentSection
                 comments={data.comments}
                 onError={showError}
               />
+              {/* onError kept for future flag/report features */}
 
               <View style={styles.bottomPad} />
             </ScrollView>
 
-            {/* Comment input pinned at bottom */}
-            <CommentInput
-              pollId={id}
-              hasCommented={data.has_commented}
-              userComment={data.user_comment}
-              onCommentAdded={handleCommentAdded}
-              onError={showError}
-            />
+            {/* Comment input pinned at bottom — hidden if comment_banned */}
+            {data.comment_banned ? (
+              <View style={[styles.bannedContainer, { borderTopColor: colors.border, paddingBottom: Math.max(0, 12) }]}>
+                <Text style={[styles.bannedText, { color: colors.textTertiary }]}>
+                  Commenting is unavailable on your account.
+                </Text>
+              </View>
+            ) : (
+              <CommentInput
+                pollId={id}
+                hasCommented={data.has_commented}
+                onOptimisticComment={addOptimisticComment}
+                onConfirmComment={confirmComment}
+                onRemoveComment={removeComment}
+                onError={showError}
+                onBlocked={showBlocked}
+              />
+            )}
           </>
         ) : null}
       </SafeAreaView>
 
-      {toast ? <Toast message={toast} onHide={() => setToast(null)} /> : null}
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          duration={toast.duration}
+          visible={!!toast}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -404,4 +431,32 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   bottomPad: { height: 20 },
+  yourVoiceCard: {
+    borderLeftWidth: 3,
+    paddingLeft: 10,
+    paddingVertical: 6,
+    gap: 3,
+  },
+  yourVoiceLabel: {
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 11,
+    letterSpacing: 0.5,
+  },
+  yourVoiceText: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  bannedContainer: {
+    borderTopWidth: 0.5,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 14,
+    alignItems: 'center',
+  },
+  bannedText: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 12,
+    textAlign: 'center',
+  },
 });

@@ -11,6 +11,8 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: CORS });
   }
 
+  const start = Date.now();
+
   try {
     // ── Auth ──────────────────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
@@ -27,48 +29,83 @@ Deno.serve(async (req) => {
     if (authError || !user) return json({ error: "Unauthorized" }, 401);
     const userId = user.id;
 
-    // ── Extract poll ID from path: /functions/v1/poll/{id} ────────────────
+    // ── Extract poll ID from path ─────────────────────────────────────────
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
     const pollId = pathParts[pathParts.length - 1];
+    if (!pollId || pollId === "poll") return json({ error: "Poll ID required" }, 400);
 
-    if (!pollId || pollId === "poll") {
-      return json({ error: "Poll ID required" }, 400);
-    }
-
-    // ── Fetch poll + user profile in parallel ─────────────────────────────
-    const [pollResult, profileResult] = await Promise.all([
-      supabase.from("polls").select("*").eq("id", pollId).maybeSingle(),
-      supabase
-        .from("users")
-        .select("age_range, region, region_detail, political_lean, gender")
-        .eq("id", userId)
-        .maybeSingle(),
-    ]);
-
-    if (pollResult.error) {
-      console.error("[poll] DB error:", pollResult.error);
-      return json({ error: "Failed to fetch poll" }, 500);
-    }
-    if (!pollResult.data) {
-      return json({ error: "Poll not found" }, 404);
-    }
-    const poll = pollResult.data;
-    const profile = profileResult.data;
-
-    // ── Current counts: Redis first, fallback to vote_counts ─────────────
     const redis = new Redis({
       url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
     });
 
-    const [redisYes, redisNo, redisTotal, userVotedFlag] = await Promise.all([
+    // ── All queries in parallel ───────────────────────────────────────────
+    // Collapses 4 sequential round-trip layers into 1
+    const [
+      pollResult,
+      profileResult,
+      voteRowsResult,
+      rawCommentsResult,
+      myCommentResult,
+      commentCountResult,
+      userVoteResult,
+      redisYes,
+      redisNo,
+      redisTotal,
+    ] = await Promise.all([
+      supabase.from("polls").select("*").eq("id", pollId).maybeSingle(),
+      supabase
+        .from("users")
+        .select("age_range, region, region_detail, political_lean, gender, comment_banned")
+        .eq("id", userId)
+        .maybeSingle(),
+      supabase
+        .from("votes")
+        .select("value, users(age_range, region, political_lean, gender)")
+        .eq("poll_id", pollId),
+      supabase
+        .from("comments")
+        .select("id, content, created_at, users:user_id(age_range, region_detail, political_lean)")
+        .eq("poll_id", pollId)
+        .eq("ai_decision", "approved")
+        .order("created_at", { ascending: false })
+        .limit(50),
+      supabase
+        .from("comments")
+        .select("id, content")
+        .eq("poll_id", pollId)
+        .eq("user_id", userId)
+        .maybeSingle(),
+      supabase
+        .from("comments")
+        .select("id", { count: "exact", head: true })
+        .eq("poll_id", pollId)
+        .eq("ai_decision", "approved"),
+      supabase
+        .from("votes")
+        .select("value")
+        .eq("poll_id", pollId)
+        .eq("user_id", userId)
+        .maybeSingle(),
       redis.get<number>(`poll:${pollId}:yes`),
       redis.get<number>(`poll:${pollId}:no`),
       redis.get<number>(`poll:${pollId}:total`),
-      redis.get(`user:${userId}:voted:${pollId}`),
     ]);
 
+    console.log(`[poll] parallel fetch: ${Date.now() - start}ms`);
+
+    // ── Poll existence check ──────────────────────────────────────────────
+    if (pollResult.error) {
+      console.error("[poll] DB error:", pollResult.error);
+      return json({ error: "Failed to fetch poll" }, 500);
+    }
+    if (!pollResult.data) return json({ error: "Poll not found" }, 404);
+
+    const poll = pollResult.data;
+    const profile = profileResult.data;
+
+    // ── Counts: Redis first, fallback to vote_counts ──────────────────────
     let yesCount: number;
     let noCount: number;
     let totalCount: number;
@@ -88,52 +125,10 @@ Deno.serve(async (req) => {
       totalCount = vc?.total_count ?? 0;
     }
 
-    // ── User's own vote (Redis flag + DB fallback) ────────────────────────
-    let userVote: number | null = null;
-    if (userVotedFlag) {
-      const { data: voteRow } = await supabase
-        .from("votes")
-        .select("value")
-        .eq("poll_id", pollId)
-        .eq("user_id", userId)
-        .maybeSingle();
-      userVote = voteRow?.value ?? null;
-    } else {
-      const { data: voteRow } = await supabase
-        .from("votes")
-        .select("value")
-        .eq("poll_id", pollId)
-        .eq("user_id", userId)
-        .maybeSingle();
-      userVote = voteRow?.value ?? null;
-    }
-
-    // ── Demographic breakdown + comment counts + user comment ─────────────
-    const [voteRowsResult, rawCommentsResult, myCommentResult, commentCountResult] =
-      await Promise.all([
-        supabase
-          .from("votes")
-          .select("value, users(age_range, region, political_lean, gender)")
-          .eq("poll_id", pollId),
-        supabase
-          .from("comments")
-          .select("id, content, created_at, users:user_id(age_range, region_detail, political_lean)")
-          .eq("poll_id", pollId)
-          .eq("ai_decision", "approved")
-          .order("created_at", { ascending: false })
-          .limit(50),
-        supabase
-          .from("comments")
-          .select("id, content")
-          .eq("poll_id", pollId)
-          .eq("user_id", userId)
-          .maybeSingle(),
-        supabase
-          .from("comments")
-          .select("id", { count: "exact", head: true })
-          .eq("poll_id", pollId)
-          .eq("ai_decision", "approved"),
-      ]);
+    // ── Build response ────────────────────────────────────────────────────
+    const userVote: number | null = userVoteResult.data?.value ?? null;
+    const myComment = myCommentResult.data;
+    const commentCount = commentCountResult.count ?? 0;
 
     const { demographic_breakdown, full_breakdown } = buildDemographicBreakdown(
       voteRowsResult.data ?? [],
@@ -148,19 +143,15 @@ Deno.serve(async (req) => {
       political_lean: c.users?.political_lean ?? null,
     }));
 
-    const myComment = myCommentResult.data;
-    const commentCount = commentCountResult.count ?? 0;
-
-    // ── User demographics for Stats screen ────────────────────────────────
     const userDemographics = {
       age_group: profile?.age_range ?? null,
       region: profile?.region ?? null,
       region_detail: profile?.region_detail ?? null,
-      politics_label: profile?.political_lean != null
-        ? politicalLabel(profile.political_lean)
-        : null,
+      politics_label: profile?.political_lean != null ? politicalLabel(profile.political_lean) : null,
       gender: profile?.gender ?? null,
     };
+
+    console.log(`[poll] done in ${Date.now() - start}ms`);
 
     return json({
       poll,
@@ -175,6 +166,7 @@ Deno.serve(async (req) => {
       comments,
       has_commented: myComment !== null,
       user_comment: myComment?.content ?? null,
+      comment_banned: profile?.comment_banned ?? false,
     });
   } catch (err) {
     console.error("[poll]", err);
@@ -209,12 +201,9 @@ function buildDemographicBreakdown(votes: VoteRow[]) {
     bump(byAge, u.age_range);
     bump(byRegion, u.region);
     bump(byGender, u.gender);
-    if (u.political_lean !== null) {
-      bump(byPolitics, politicalLabel(u.political_lean));
-    }
+    if (u.political_lean !== null) bump(byPolitics, politicalLabel(u.political_lean));
   }
 
-  // Compact form (used by DemographicBreakdown component)
   const toPct = (group: GroupCounts) =>
     Object.fromEntries(
       Object.entries(group).map(([k, v]) => {
@@ -223,13 +212,11 @@ function buildDemographicBreakdown(votes: VoteRow[]) {
       }),
     );
 
-  // Full form sorted by total desc (used by Stats screen)
   const toSortedArray = (group: GroupCounts) =>
     Object.entries(group)
       .map(([label, v]) => {
         const total = v.yes + v.no;
-        const yes_pct = total > 0 ? Math.round((v.yes / total) * 100) : 0;
-        return { label, yes: v.yes, no: v.no, total, yes_pct };
+        return { label, yes: v.yes, no: v.no, total, yes_pct: total > 0 ? Math.round((v.yes / total) * 100) : 0 };
       })
       .sort((a, b) => b.total - a.total);
 
@@ -260,6 +247,10 @@ function politicalLabel(lean: number): string {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: {
+      ...CORS,
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
 }

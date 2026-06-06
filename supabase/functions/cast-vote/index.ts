@@ -6,19 +6,19 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const VOTED_TTL = 2592000; // 30 days in seconds
+const VOTED_TTL = 2592000; // 30 days
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS });
   }
 
+  const start = Date.now();
+
   try {
     // ── Auth ──────────────────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return json({ error: "Unauthorized" }, 401);
-    }
+    if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -28,9 +28,7 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(
       authHeader.replace("Bearer ", ""),
     );
-    if (authError || !user) {
-      return json({ error: "Unauthorized" }, 401);
-    }
+    if (authError || !user) return json({ error: "Unauthorized" }, 401);
     const userId = user.id;
 
     // ── Validate body ─────────────────────────────────────────────────────
@@ -40,49 +38,53 @@ Deno.serve(async (req) => {
       return json({ error: "Body must contain poll_id and value (1 or -1)" }, 400);
     }
 
-    // ── Redis ─────────────────────────────────────────────────────────────
     const redis = new Redis({
       url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
     });
 
-    // Duplicate-vote check — Redis is the fast gate
+    // ── Duplicate-vote gate ───────────────────────────────────────────────
     const voteKey = `user:${userId}:voted:${poll_id}`;
     const alreadyVoted = await redis.get(voteKey);
-    if (alreadyVoted) {
-      return json({ error: "Already voted on this poll" }, 409);
-    }
+    if (alreadyVoted) return json({ error: "Already voted on this poll" }, 409);
 
-    // Increment Redis counters
-    let yesCount: number;
-    let noCount: number;
+    // ── Parallel Redis counter update + voted flag ────────────────────────
+    // incr the voted side, get the other, incr total, set voted flag — all at once
+    const [yesRaw, noRaw, totalRaw] = await Promise.all([
+      value === 1
+        ? redis.incr(`poll:${poll_id}:yes`)
+        : redis.get<number>(`poll:${poll_id}:yes`),
+      value === -1
+        ? redis.incr(`poll:${poll_id}:no`)
+        : redis.get<number>(`poll:${poll_id}:no`),
+      redis.incr(`poll:${poll_id}:total`),
+      redis.set(voteKey, "1", { ex: VOTED_TTL }),
+    ]);
 
-    if (value === 1) {
-      yesCount = await redis.incr(`poll:${poll_id}:yes`);
-      noCount = Number((await redis.get(`poll:${poll_id}:no`)) ?? 0);
-    } else {
-      noCount = await redis.incr(`poll:${poll_id}:no`);
-      yesCount = Number((await redis.get(`poll:${poll_id}:yes`)) ?? 0);
-    }
-    const total = await redis.incr(`poll:${poll_id}:total`);
+    const yesCount = Number(yesRaw ?? 0);
+    const noCount = Number(noRaw ?? 0);
+    const total = Number(totalRaw);
 
-    // Mark voted in Redis (30-day TTL) — must succeed before we return
-    await redis.set(voteKey, "1", { ex: VOTED_TTL });
+    console.log(`[cast-vote] Redis done in ${Date.now() - start}ms`);
 
-    // ── PostgreSQL writes (synchronous, best-effort) ───────────────────────
-    // Both writes run in parallel. Failures are logged but do not fail the
-    // request — Redis is already updated and the user's vote is counted.
-    const [votesResult, countsResult] = await Promise.allSettled([
-      // Record the individual vote
+    // ── Broadcast immediately (before DB) ─────────────────────────────────
+    supabase.channel(`poll:${poll_id}`).send({
+      type: "broadcast",
+      event: "vote_update",
+      payload: { yes: yesCount, no: noCount, total },
+    });
+
+    // ── DB writes fire-and-forget (background, don't await) ──────────────
+    Promise.allSettled([
       supabase
         .from("votes")
         .upsert(
           { poll_id, user_id: userId, value },
           { onConflict: "poll_id,user_id", ignoreDuplicates: true },
         )
-        .then(({ error }) => { if (error) throw error; }),
-
-      // Keep vote_counts as a near-real-time PG mirror of Redis totals
+        .then(({ error }) => {
+          if (error) console.warn("[cast-vote] votes upsert failed:", error.message);
+        }),
       supabase
         .from("vote_counts")
         .upsert(
@@ -95,22 +97,12 @@ Deno.serve(async (req) => {
           },
           { onConflict: "poll_id" },
         )
-        .then(({ error }) => { if (error) throw error; }),
+        .then(({ error }) => {
+          if (error) console.warn("[cast-vote] vote_counts upsert failed:", error.message);
+        }),
     ]);
 
-    if (votesResult.status === "rejected") {
-      console.warn("[cast-vote] votes upsert failed:", String(votesResult.reason));
-    }
-    if (countsResult.status === "rejected") {
-      console.warn("[cast-vote] vote_counts upsert failed:", String(countsResult.reason));
-    }
-
-    // ── Realtime broadcast ────────────────────────────────────────────────
-    await supabase.channel(`poll:${poll_id}`).send({
-      type: "broadcast",
-      event: "vote_update",
-      payload: { yes: yesCount, no: noCount, total },
-    });
+    console.log(`[cast-vote] done in ${Date.now() - start}ms`);
 
     return json({ success: true, yes_count: yesCount, no_count: noCount, total });
   } catch (err) {
@@ -122,6 +114,10 @@ Deno.serve(async (req) => {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: {
+      ...CORS,
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
 }

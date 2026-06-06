@@ -32,12 +32,12 @@ export function usePollDetail(pollId: string) {
     };
   }, [load]);
 
-  // Realtime: new comments pushed from submit-comment broadcast
+  // Realtime: new comments from other users (or Realtime winning the race on submit)
   useEffect(() => {
     const unsub = subscribeToPollComments(pollId, ({ comment }) => {
       setData((prev) => {
         if (!prev) return prev;
-        // Deduplicate — Realtime may fire on the same device that submitted
+        // Deduplicate by real ID — covers both Realtime-first and confirm-first races
         if (prev.comments.some((c) => c.id === comment.id)) return prev;
         const newComment: PublicComment = {
           id: comment.id,
@@ -66,7 +66,8 @@ export function usePollDetail(pollId: string) {
     [],
   );
 
-  const addComment = useCallback((comment: PublicComment) => {
+  // Optimistic: immediately add a pending comment and flip has_commented
+  const addOptimisticComment = useCallback((comment: PublicComment) => {
     setData((prev) => {
       if (!prev) return prev;
       return {
@@ -78,5 +79,53 @@ export function usePollDetail(pollId: string) {
     });
   }, []);
 
-  return { data, loading, error, updateCounts, addComment, refetch: load };
+  // Confirm: swap the temp ID for the real comment in-place
+  const confirmComment = useCallback((tempId: string, realComment: PublicComment) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      // If Realtime already added the real comment, just drop the temp
+      const realtimeAlreadyAdded = prev.comments.some(
+        (c) => c.id === realComment.id && c.id !== tempId,
+      );
+      if (realtimeAlreadyAdded) {
+        return {
+          ...prev,
+          comments: prev.comments.filter((c) => c.id !== tempId),
+          user_comment: realComment.content,
+        };
+      }
+      // Replace temp entry with the confirmed comment (remove pending flag)
+      return {
+        ...prev,
+        comments: prev.comments.map((c) =>
+          c.id === tempId ? { ...realComment, pending: false } : c,
+        ),
+        user_comment: realComment.content,
+      };
+    });
+  }, []);
+
+  // Remove: drop a failed/blocked optimistic comment and reset commented state
+  const removeComment = useCallback((tempId: string) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        comments: prev.comments.filter((c) => c.id !== tempId),
+        has_commented: false,
+        user_comment: null,
+      };
+    });
+  }, []);
+
+  return {
+    data,
+    loading,
+    error,
+    updateCounts,
+    addOptimisticComment,
+    confirmComment,
+    removeComment,
+    refetch: load,
+  };
 }

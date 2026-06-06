@@ -7,7 +7,7 @@ import {
   Animated,
   StyleSheet,
 } from 'react-native';
-import { useLocalSearchParams, useGlobalSearchParams, router } from 'expo-router';
+import { useGlobalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/constants/colors';
@@ -24,7 +24,6 @@ const TABS: { key: DimKey; label: string }[] = [
   { key: 'gender', label: 'Gender' },
 ];
 
-const MIN_VOTES = 5;
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -191,34 +190,11 @@ const summaryStyles = StyleSheet.create({
 // ── Stats Screen ──────────────────────────────────────────────────────────────
 
 export default function StatsScreen() {
-  // useLocalSearchParams only returns params for the current segment ('stats' — static).
-  // useGlobalSearchParams returns the full route tree params, which includes [id] from the parent.
-  const localParams = useLocalSearchParams<{ id: string }>();
-  const globalParams = useGlobalSearchParams<{ id: string }>();
-  const { id } = globalParams;
-
-  console.log('[stats] screen mounted/rendered');
-  console.log('[stats] localParams:', localParams);
-  console.log('[stats] globalParams:', globalParams);
-  console.log('[stats] id resolved to:', id);
-
+  const { id } = useGlobalSearchParams<{ id: string }>();
   const colors = useColors();
   const [activeTab, setActiveTab] = useState<DimKey>('age');
 
-  console.log('[stats] calling usePollDetail with pollId:', id);
   const { data, loading, error } = usePollDetail(id);
-  console.log('[stats] usePollDetail result — loading:', loading, 'error:', error, 'data:', data ? 'present' : 'null');
-
-  // Log the full API response shape once when data first arrives
-  useEffect(() => {
-    if (!data) return;
-    console.log('[stats] data keys from API:', Object.keys(data));
-    console.log('[stats] poll (DbPoll) keys:', Object.keys(data.poll));
-    console.log('[stats] full_breakdown:', JSON.stringify(data.full_breakdown, null, 2));
-    console.log('[stats] yes_count:', data.yes_count, 'no_count:', data.no_count, 'total_count:', data.total_count);
-    console.log('[stats] comment_count:', data.comment_count);
-    console.log('[stats] user_demographics:', JSON.stringify(data.user_demographics));
-  }, [data]);
 
   const poll = data?.poll;
   const total = data?.total_count ?? 0;
@@ -228,9 +204,6 @@ export default function StatsScreen() {
 
   const full = data?.full_breakdown;
   const userDemo = data?.user_demographics;
-
-  console.log('[stats] render branch — loading:', loading, 'hasData:', !!data, 'error:', error);
-  console.log('[stats] computed — total:', total, 'yesPct:', yesPct, 'full present:', !!full, 'groups tab:', activeTab);
 
   function isOwnGroup(dim: DimKey, label: string): boolean {
     if (!userDemo) return false;
@@ -242,9 +215,7 @@ export default function StatsScreen() {
     }
   }
 
-  const groups: DemographicGroup[] = full
-    ? (full[activeTab] as DemographicGroup[]).filter(g => g.total >= MIN_VOTES)
-    : [];
+  const groups: DemographicGroup[] = full ? (full[activeTab] as DemographicGroup[]) : [];
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={['top']}>

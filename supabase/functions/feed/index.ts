@@ -37,6 +37,8 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: CORS });
   }
 
+  const start = Date.now();
+
   try {
     // ── Auth ──────────────────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
@@ -81,47 +83,42 @@ Deno.serve(async (req) => {
 
     const { data: polls, error: dbError } = await query;
     if (dbError) {
-      console.error("[feed] DB error:", dbError.message, dbError.details, dbError.hint);
-      return json({ error: "Failed to fetch feed", detail: dbError.message }, 500);
+      console.error("[feed] DB error:", dbError.message);
+      return json({ error: "Failed to fetch feed" }, 500);
     }
-
-    console.log(`[feed] DB returned ${polls?.length ?? 0} rows`);
 
     const pagePolls = (polls as PollRow[]).slice(0, limit);
     const pollIds = pagePolls.map((p) => p.id);
 
-    // ── Batch: user votes + comment counts ────────────────────────────────
+    console.log(`[feed] DB: ${polls?.length ?? 0} rows in ${Date.now() - start}ms`);
+
+    if (pollIds.length === 0) {
+      return json({ polls: [], cursor: null, has_more: false });
+    }
+
+    // ── Batch: user votes + comment counts — parallel ─────────────────────
     const userVoteMap: Record<string, 1 | -1> = {};
     const commentCountMap: Record<string, number> = {};
 
     await Promise.all([
-      // User votes for this page
       supabase
         .from("votes")
         .select("poll_id, value")
         .eq("user_id", user.id)
         .in("poll_id", pollIds)
-        .then(({ data, error }) => {
-          if (error) {
-            console.warn("[feed] user-vote query error:", error.message);
-          } else if (data) {
-            for (const v of data) {
-              userVoteMap[v.poll_id] = v.value as 1 | -1;
-            }
-            console.log(`[feed] user has voted on ${data.length} polls in this page`);
+        .then(({ data }) => {
+          if (data) {
+            for (const v of data) userVoteMap[v.poll_id] = v.value as 1 | -1;
           }
         }),
 
-      // Comment counts for this page (approved only)
       supabase
         .from("comments")
         .select("poll_id")
         .in("poll_id", pollIds)
         .eq("ai_decision", "approved")
-        .then(({ data, error }) => {
-          if (error) {
-            console.warn("[feed] comment count query error:", error.message);
-          } else if (data) {
+        .then(({ data }) => {
+          if (data) {
             for (const c of data) {
               commentCountMap[c.poll_id] = (commentCountMap[c.poll_id] ?? 0) + 1;
             }
@@ -129,7 +126,9 @@ Deno.serve(async (req) => {
         }),
     ]);
 
-    // ── Enrich with counts from Redis, fallback to vote_counts ────────────
+    console.log(`[feed] votes+comments: ${Date.now() - start}ms`);
+
+    // ── Enrich with Redis counts (all polls in parallel) ──────────────────
     const redis = new Redis({
       url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
@@ -137,7 +136,6 @@ Deno.serve(async (req) => {
 
     const enriched: PollWithCounts[] = await Promise.all(
       pagePolls.map(async (poll) => {
-        let velocity = 0;
         try {
           const [redisYes, redisNo, redisTotal, redisVelocity] = await Promise.all([
             redis.get<number>(`poll:${poll.id}:yes`),
@@ -146,15 +144,13 @@ Deno.serve(async (req) => {
             redis.get<number>(`poll:${poll.id}:velocity`),
           ]);
 
-          velocity = Number(redisVelocity ?? 0);
-
           if (redisTotal !== null) {
             return {
               ...poll,
               yes_count: Number(redisYes ?? 0),
               no_count: Number(redisNo ?? 0),
               total_count: Number(redisTotal),
-              velocity,
+              velocity: Number(redisVelocity ?? 0),
               user_vote: userVoteMap[poll.id] ?? null,
               comment_count: commentCountMap[poll.id] ?? 0,
             };
@@ -163,30 +159,24 @@ Deno.serve(async (req) => {
           console.warn(`[feed] Redis error for poll ${poll.id}:`, String(redisErr));
         }
 
-        // Fall back to vote_counts table
-        const { data: vc, error: vcErr } = await supabase
+        // Fallback to vote_counts table on Redis miss
+        const { data: vc } = await supabase
           .from("vote_counts")
           .select("yes_count, no_count, total_count")
           .eq("poll_id", poll.id)
           .maybeSingle();
-
-        if (vcErr) {
-          console.warn(`[feed] vote_counts error for poll ${poll.id}:`, vcErr.message);
-        }
 
         return {
           ...poll,
           yes_count: vc?.yes_count ?? 0,
           no_count: vc?.no_count ?? 0,
           total_count: vc?.total_count ?? 0,
-          velocity,
+          velocity: 0,
           user_vote: userVoteMap[poll.id] ?? null,
           comment_count: commentCountMap[poll.id] ?? 0,
         };
       }),
     );
-
-    console.log(`[feed] returning ${enriched.length} enriched polls`);
 
     if (mode === "closest") {
       enriched.sort((a, b) => {
@@ -198,9 +188,9 @@ Deno.serve(async (req) => {
 
     const hasMore = (polls as PollRow[]).length > limit;
     const lastItem = enriched[enriched.length - 1];
-    const nextCursor = hasMore && lastItem?.promoted_at
-      ? btoa(lastItem.promoted_at)
-      : null;
+    const nextCursor = hasMore && lastItem?.promoted_at ? btoa(lastItem.promoted_at) : null;
+
+    console.log(`[feed] done — ${enriched.length} polls in ${Date.now() - start}ms`);
 
     return json({ polls: enriched, cursor: nextCursor, has_more: hasMore });
   } catch (err) {
@@ -212,6 +202,10 @@ Deno.serve(async (req) => {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: {
+      ...CORS,
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
 }

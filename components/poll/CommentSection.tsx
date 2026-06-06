@@ -1,16 +1,13 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet } from 'react-native';
 import { useColors } from '@/constants/colors';
-import { flagComment } from '@/lib/api';
 import type { PublicComment } from '@/types/database';
 
 interface Props {
   comments: PublicComment[];
-  onError: (msg: string) => void;
+  onError?: (msg: string) => void;
 }
 
-export function CommentSection({ comments, onError }: Props) {
+export function CommentSection({ comments }: Props) {
   const colors = useColors();
 
   if (comments.length === 0) {
@@ -27,59 +24,29 @@ export function CommentSection({ comments, onError }: Props) {
     <View style={styles.container}>
       <Text style={[styles.heading, { color: colors.text }]}>Voices</Text>
       {comments.map((c) => (
-        <CommentCard key={c.id} comment={c} onError={onError} />
+        <CommentCard key={c.id} comment={c} />
       ))}
     </View>
   );
 }
 
-function CommentCard({
-  comment,
-  onError,
-}: {
-  comment: PublicComment;
-  onError: (msg: string) => void;
-}) {
+function CommentCard({ comment }: { comment: PublicComment }) {
   const colors = useColors();
-  const [flagged, setFlagged] = useState(false);
-  const [flagging, setFlagging] = useState(false);
-
-  async function handleFlag() {
-    if (flagged || flagging) return;
-    setFlagging(true);
-    try {
-      await flagComment(comment.id);
-      setFlagged(true);
-    } catch {
-      onError('Failed to flag comment');
-    } finally {
-      setFlagging(false);
-    }
-  }
-
   const attribution = formatAttribution(comment.age_range, comment.region_detail, comment.political_lean);
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.cardHeader}>
-        <Text style={[styles.content, { color: colors.text }]}>{comment.content}</Text>
-        <TouchableOpacity
-          onPress={handleFlag}
-          hitSlop={10}
-          activeOpacity={0.7}
-          disabled={flagged || flagging}
-        >
-          <Ionicons
-            name={flagged ? 'flag' : 'flag-outline'}
-            size={14}
-            color={flagged ? colors.disagree : colors.textTertiary}
-          />
-        </TouchableOpacity>
-      </View>
-      {attribution ? (
-        <Text style={[styles.attribution, { color: colors.textTertiary }]}>
-          — {attribution}
-        </Text>
+    <View
+      style={[
+        styles.card,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        comment.pending && styles.cardPending,
+      ]}
+    >
+      <Text style={[styles.content, { color: colors.text }]}>{comment.content}</Text>
+      {comment.pending ? (
+        <Text style={[styles.attribution, { color: colors.textTertiary }]}>Posting…</Text>
+      ) : attribution ? (
+        <Text style={[styles.attribution, { color: colors.textTertiary }]}>— {attribution}</Text>
       ) : null}
     </View>
   );
@@ -106,9 +73,7 @@ function politicalLabel(lean: number): string {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    gap: 8,
-  },
+  container: { gap: 8 },
   heading: {
     fontFamily: 'Syne_700Bold',
     fontSize: 18,
@@ -128,16 +93,13 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 6,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
+  cardPending: {
+    opacity: 0.6,
   },
   content: {
     fontFamily: 'DMSans_400Regular',
     fontSize: 14,
     lineHeight: 20,
-    flex: 1,
   },
   attribution: {
     fontFamily: 'DMSans_400Regular',

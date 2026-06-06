@@ -35,15 +35,17 @@ Deno.serve(async (req) => {
       return json({ error: "comment_id required" }, 400);
     }
 
-    // ── Check comment exists and is approved ──────────────────────────────
+    // ── Check comment exists and get commenter's user_id ──────────────────
     const { data: comment } = await supabase
       .from("comments")
-      .select("id, ai_decision")
+      .select("id, ai_decision, user_id")
       .eq("id", comment_id)
       .maybeSingle();
 
     if (!comment) return json({ error: "Comment not found" }, 404);
-    if (comment.ai_decision === "blocked") return json({ success: true });
+    if (comment.ai_decision === "blocked") {
+      return json({ flagged: true, hidden: true });
+    }
 
     // ── Insert flag (ignore duplicate flags from same user) ───────────────
     const { error: flagError } = await supabase
@@ -61,14 +63,36 @@ Deno.serve(async (req) => {
       .select("id", { count: "exact", head: true })
       .eq("comment_id", comment_id);
 
+    let isNowHidden = false;
+
     if (count !== null && count >= 3) {
       await supabase
         .from("comments")
         .update({ ai_decision: "blocked" })
         .eq("id", comment_id);
+
+      isNowHidden = true;
+
+      // ── Strike system: check if commenter should be banned ────────────
+      const commenterId = comment.user_id;
+
+      const { count: blockedCount } = await supabase
+        .from("comments")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", commenterId)
+        .eq("ai_decision", "blocked");
+
+      if (blockedCount !== null && blockedCount >= 3) {
+        await supabase
+          .from("users")
+          .update({ comment_banned: true })
+          .eq("id", commenterId);
+
+        console.log("[flag-comment] User", commenterId, "banned after", blockedCount, "blocked comments");
+      }
     }
 
-    return json({ success: true });
+    return json({ flagged: true, hidden: isNowHidden });
   } catch (err) {
     console.error("[flag-comment]", err);
     return json({ error: "Internal server error" }, 500);

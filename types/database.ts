@@ -150,6 +150,7 @@ export interface PublicComment {
   age_range: string | null;
   region_detail: string | null;
   political_lean: number | null;
+  pending?: boolean;
 }
 
 export interface UserDemographics {
@@ -173,6 +174,7 @@ export interface PollDetailResponse {
   comments: PublicComment[];
   has_commented: boolean;
   user_comment: string | null;
+  comment_banned: boolean;
 }
 
 // ── Database helper type (for supabase client generics) ───────────────────

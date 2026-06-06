@@ -3,6 +3,39 @@ starting any work. Update CONTEXT.md at the end of every session.
 
 ## Development Standards
 
+### Performance Patterns — Always Follow
+
+**Client (React Native):**
+
+- NEVER await before updating UI — optimistic updates always fire first
+- API calls always fire after UI state is already updated
+- On failure: revert UI, show toast, restore input
+- Never use crypto.randomUUID() — use:
+  Math.random().toString(36).substring(2) + Date.now().toString(36)
+- Never block the main thread — all API calls async, fire and forget
+  where possible
+
+**Edge Functions:**
+
+- ALWAYS parallelize independent queries with Promise.all
+- NEVER sequential awaits in a loop — batch with Promise.all
+- Redis operations run before DB operations — Redis is faster
+- Realtime broadcast fires after Redis, not after DB
+- DB writes that don't affect the response use Promise.allSettled
+  and are fire-and-forget
+- Log execution time on every function:
+  const start = Date.now()
+  console.log(`[fnName] done in ${Date.now() - start}ms`)
+
+**Data flow:**
+
+- DB is always source of truth
+- Redis is the fast read cache — never the only record
+- Client AsyncStorage is convenience cache only — always
+  reconcile with server on load
+- Optimistic UI reverts on any server error — never leave
+  UI in wrong state permanently
+
 ### Deprecated Packages — Never Use
 
 - `uuid` below v11 — use `crypto.randomUUID()` natively instead
