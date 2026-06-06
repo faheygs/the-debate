@@ -59,9 +59,23 @@ flag-comment, and re-enabled card navigation from feed.
 Post-launch: vote state sync across screens, poll card info row (votes · voices), zero-vote state,
 "View Stats" button on detail screen, Stats screen with demographic ranked bars.
 
+### ✅ Phase 6 — Comments + Moderation (complete)
+
+Full Claude moderation wired (exact SPEC §6.1 prompt), blocked comments never written to DB,
+optimistic comment display with fade-out on block, comment ban handling, flag-comment strike system,
+migration 007 indexes. Claude moderation disabled for beta (auto-approve all).
+
+### ✅ Performance Pass (complete)
+
+- `components/poll/CommentSection.tsx`: flag button removed; pending card opacity 0.6
+- `supabase/functions/feed/index.ts`: timing logs, Cache-Control: no-store, early empty return
+- `supabase/functions/poll/index.ts`: 4 sequential DB/Redis layers collapsed to 1 `Promise.all` (10 parallel fetches); removed redundant userVotedFlag if/else; timing logs; Cache-Control header
+- `supabase/functions/cast-vote/index.ts`: Redis incr+get+set all in one `Promise.all`; Realtime broadcast fires before DB writes; DB writes are fire-and-forget (non-blocking); timing logs; Cache-Control header
+- `supabase/functions/submit-comment/index.ts`: ban check + DB duplicate + Redis duplicate all in parallel `Promise.all`; Realtime broadcast is fire-and-forget; timing logs; Cache-Control header
+- `supabase/migrations/008_performance_indexes.sql`: `idx_polls_status_promoted`, `idx_votes_user_polls`, `idx_comments_poll_decision`, `idx_votes_poll_id`
+
 ### Not started
 
-- [ ] Phase 6 — Comments + Moderation
 - [ ] Phase 7 — Submit Poll (form UI exists; edge function not built)
 - [ ] Phase 8 — Personal Board (sign out button is placeholder)
 - [ ] Phase 9 — Search
@@ -243,9 +257,10 @@ Steps 5 and 6 run in parallel via Promise.allSettled — failures are logged but
 - Saved on each confirmed server response (not on optimistic update, to avoid persisting reverted votes)
 - A `votesRef` mirrors the state for use inside async callbacks — avoids stale closure without adding `votes` as a dep
 
-### Deprecated packages — never use
+### Deprecated packages / APIs — never use
 
-- `uuid` below v11 — use `crypto.randomUUID()`
+- `crypto.randomUUID()` — not available in React Native; use `Math.random().toString(36).substring(2) + Date.now().toString(36)`
+- `uuid` package — use the inline generator above
 - `lodash.get` — use optional chaining `?.`
 
 ---
@@ -307,11 +322,50 @@ Steps 5 and 6 run in parallel via Promise.allSettled — failures are logged but
 - `lib/realtime.ts`: channel helpers for feed, poll, comments, user private channels
 - `types/database.ts`: complete TypeScript types for all tables + Edge Function response shapes
 
+### Session 18 — Performance Pass
+
+- `components/poll/CommentSection.tsx`: removed flag button and all flag-related code
+- `supabase/functions/feed/index.ts`: timing logs, `Cache-Control: no-store`, early return when no poll IDs
+- `supabase/functions/poll/index.ts`: 4 sequential round-trip layers collapsed into single `Promise.all` with 10 parallel fetches (poll + profile + votes + comments + myComment + commentCount + userVote + 3 Redis keys); removed redundant userVotedFlag check; timing logs; Cache-Control header
+- `supabase/functions/cast-vote/index.ts`: parallel Redis ops (incr voted side + get other + incr total + set voted flag in one `Promise.all`); Realtime broadcast fires immediately before DB; DB writes fire-and-forget; timing logs; Cache-Control header
+- `supabase/functions/submit-comment/index.ts`: parallel ban check + DB duplicate + Redis duplicate in one `Promise.all`; Realtime broadcast fire-and-forget; timing logs; Cache-Control header
+- `supabase/migrations/008_performance_indexes.sql`: 4 new indexes for feed/poll/vote query patterns
+- Deploy: `supabase functions deploy feed poll cast-vote submit-comment` + `supabase db push`
+
+### Session 17 — Comment UX: Optimistic Posting + "Your voice" Card
+
+- `types/database.ts`: added `pending?: boolean` to `PublicComment` — used to track in-flight optimistic comments
+- `hooks/usePollDetail.ts`: replaced `addComment` with three focused methods: `addOptimisticComment` (prepend + set `has_commented: true` immediately), `confirmComment` (swap temp ID for real in-place, handles Realtime-first race), `removeComment` (remove failed comment + reset `has_commented: false`)
+- `components/poll/CommentInput.tsx`: full rewrite — fires API in background with no await before display; on Post tap the comment appears instantly in the list and input disappears; locked state removed (card now lives in scroll view); no ActivityIndicator or Animated imports needed
+- `components/poll/CommentSection.tsx`: pending comments render at `opacity: 0.6`, show "Posting…" instead of attribution, flag button hidden while pending
+- `app/poll/[id]/index.tsx`: "Your voice" card (indigo 3px left border, DM Sans 11px label / 13px text) added inside ScrollView above Voices list — visible whenever `data.has_commented`; CommentInput now receives `onOptimisticComment`, `onConfirmComment`, `onRemoveComment` callbacks; removed `handleCommentAdded` and unused `PublicComment` import
+
+### Session 16 — Phase 6: Comments + Moderation
+
+- `supabase/functions/submit-comment/index.ts`: fixed major bug (blocked comments were being inserted to DB — now only approved comments are written); updated to exact SPEC §6.1 moderation prompt; added console.log for comment content, raw Claude response, and parsed decision; moved Redis mark and Realtime broadcast to after successful DB insert
+- `supabase/functions/flag-comment/index.ts`: added user_id to comment select; after auto-blocking at 3 flags, counts commenter's total blocked comments and sets `comment_banned = true` if >= 3; changed return from `{ success: true }` to `{ flagged: true, hidden: boolean }`
+- `supabase/functions/poll/index.ts`: added `comment_banned` to profile select and response payload
+- `types/database.ts`: added `comment_banned: boolean` to `PollDetailResponse`
+- `components/shared/Toast.tsx`: added `duration?: number` prop (default 3000ms)
+- `components/poll/CommentInput.tsx`: added optimistic pending card (shows "Posting…" while awaiting moderation); on block — fade out optimistic card (300ms Animated), then fire `onBlocked` callback; on network error — restores text for retry; added `onBlocked?` prop for 4s rose toast
+- `app/poll/[id]/index.tsx`: fixed broken Toast API (was using `onHide`/no `visible` — now uses correct `visible`/`onDismiss`); toast state upgraded to `{ message, variant, duration? }`; added `showBlocked` callback (4000ms duration); added comment ban check — hides CommentInput, shows "Commenting is unavailable on your account." (DM Sans 12px text-tertiary centered); passes `onBlocked={showBlocked}` to CommentInput
+- `supabase/migrations/007_comment_ban_index.sql`: `idx_comment_flags_comment_id`, `idx_comments_user_id`, `idx_comments_ai_decision`
+- Deploy: `supabase functions deploy submit-comment flag-comment poll` + `supabase db push`
+
+### Session 15 — Stats Screen Routing & Data Fixes
+
+- `app/poll/[id]/index.tsx` (RENAMED from `app/poll/[id].tsx`): moved to fix Expo Router conflict — `[id].tsx` and `[id]/stats.tsx` cannot coexist; `[id]/` directory now holds `index.tsx`, `stats.tsx`, `_layout.tsx`
+- `app/poll/[id]/_layout.tsx` (NEW): simple `<Stack screenOptions={{ headerShown: false }} />` wrapping both poll detail and stats screens
+- `app/poll/[id]/stats.tsx`: fixed `useLocalSearchParams` → `useGlobalSearchParams` — `stats` is a static segment so local params are empty; global params include the parent `[id]` segment; removed `MIN_VOTES` threshold entirely (show all groups immediately); removed all debug logging; removed unused `useLocalSearchParams` import
+- `supabase/functions/poll` deployed — Session 14 deploy had 403 (project not linked); now deployed with `full_breakdown` and `comment_count` in response
+- Navigation: `router.push('/poll/' + poll.id)` → `app/poll/[id]/index.tsx` ✓; `router.push('/poll/' + id + '/stats')` → `app/poll/[id]/stats.tsx` ✓
+
 ### Session 14 — Phase 5 Post-Launch Fixes
 
 - `contexts/PollStateContext.tsx` (NEW): global vote state context — `updatePollCounts`, `markPollVoted`, `getPollState`; `PollStateProvider` added to root `_layout.tsx`
 - `app/poll/[id].tsx`: removed DemographicBreakdown; integrated PollStateContext (markPollVoted + updatePollCounts on vote); added "View Stats" button (only when voted, navigates to `/poll/[id]/stats`); zero-vote state (gray bar + "Be the first to vote"); count row shows "votes · voices"; `comment_count` from API
-- `app/poll/[id]/stats.tsx` (NEW): Stats screen — header (back + "Stats" + question subtitle), 2×2 summary grid (total votes, total voices, agree %, disagree %), demographic tabs (Age/Politics/Region/Gender), ranked group bars with animated fills, user's own group highlighted in indigo left border, min 5 votes guard, region top 10
+- `app/poll/[id]/index.tsx` (was `[id].tsx`): poll detail screen — moved into `[id]/` directory to support nested stats route
+- `app/poll/[id]/stats.tsx` (NEW): Stats screen — header (back + "Stats" + question subtitle), 2×2 summary grid (total votes, total voices, agree %, disagree %), demographic tabs (Age/Politics/Region/Gender), ranked group bars with animated fills, user's own group highlighted in indigo left border, no vote threshold (all groups shown)
 - `components/feed/PollCard.tsx`: context override layer (PollStateContext) for post-vote count sync on back navigation; info row "12.4k votes · chatbubble-outline · 847 voices" using formatVoteCount; zero-vote solid gray bar + "Be the first to vote"; removed VoteCount component import
 - `supabase/functions/feed/index.ts`: added `comment_count` to response via batched Promise.all query (approved comments only)
 - `supabase/functions/poll/index.ts`: added `full_breakdown` (sorted arrays with raw yes/no/total/yes_pct per group, region top 10); added `comment_count` (approved only); `buildDemographicBreakdown` now returns both `demographic_breakdown` (compact) and `full_breakdown` (sorted arrays)

@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,65 +13,71 @@ import type { PublicComment } from '@/types/database';
 
 const MAX_CHARS = 150;
 
+const generateId = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
+
 interface Props {
   pollId: string;
   hasCommented: boolean;
-  userComment: string | null;
-  onCommentAdded: (comment: PublicComment) => void;
+  onOptimisticComment: (comment: PublicComment) => void;
+  onConfirmComment: (tempId: string, realComment: PublicComment) => void;
+  onRemoveComment: (tempId: string) => void;
   onError: (msg: string) => void;
+  onBlocked?: (msg: string) => void;
 }
 
-export function CommentInput({ pollId, hasCommented, userComment, onCommentAdded, onError }: Props) {
+export function CommentInput({
+  pollId,
+  hasCommented,
+  onOptimisticComment,
+  onConfirmComment,
+  onRemoveComment,
+  onError,
+  onBlocked,
+}: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
-  if (hasCommented) {
-    return (
-      <View
-        style={[
-          styles.lockedContainer,
-          {
-            backgroundColor: colors.background,
-            borderTopColor: colors.border,
-            paddingBottom: Math.max(insets.bottom, 12),
-          },
-        ]}
-      >
-        <View style={[styles.lockedCard, { borderColor: colors.primary }]}>
-          <Text style={[styles.lockedLabel, { color: colors.primary }]}>Your voice</Text>
-          <Text style={[styles.lockedText, { color: colors.text }]} numberOfLines={2}>
-            {userComment}
-          </Text>
-        </View>
-      </View>
-    );
-  }
+  // Hidden once commented — "Your voice" card is shown above the Voices list
+  if (hasCommented) return null;
 
-  async function handleSubmit() {
+  function handleSubmit() {
     const trimmed = text.trim();
-    if (!trimmed || submitting) return;
-    setSubmitting(true);
-    try {
-      const result = await submitComment(pollId, trimmed);
+    if (!trimmed) return;
+
+    const tempId = generateId();
+    const optimistic: PublicComment = {
+      id: tempId,
+      content: trimmed,
+      created_at: new Date().toISOString(),
+      age_range: null,
+      region_detail: null,
+      political_lean: null,
+      pending: true,
+    };
+
+    // Show comment instantly, close input
+    onOptimisticComment(optimistic);
+    setText('');
+
+    // Fire API in background — no await before display
+    submitComment(pollId, trimmed).then((result) => {
       if (result.approved && result.comment) {
-        setText('');
-        onCommentAdded(result.comment as PublicComment);
+        onConfirmComment(tempId, result.comment as PublicComment);
       } else {
-        onError('Your comment was blocked by our moderation filter. Try rephrasing.');
+        onRemoveComment(tempId);
+        const msg = 'Your voice was blocked. Keep it on topic and respectful.';
+        onBlocked ? onBlocked(msg) : onError(msg);
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to submit comment';
-      onError(msg);
-    } finally {
-      setSubmitting(false);
-    }
+    }).catch((err: unknown) => {
+      onRemoveComment(tempId);
+      onError(err instanceof Error ? err.message : 'Failed to post comment');
+    });
   }
 
   const remaining = MAX_CHARS - text.length;
   const overLimit = remaining < 0;
-  const canSubmit = text.trim().length > 0 && !overLimit && !submitting;
+  const canSubmit = text.trim().length > 0 && !overLimit;
 
   return (
     <View
@@ -101,7 +106,13 @@ export function CommentInput({ pollId, hasCommented, userComment, onCommentAdded
           <Text
             style={[
               styles.charCount,
-              { color: overLimit ? colors.disagree : remaining <= 20 ? colors.trending : colors.textTertiary },
+              {
+                color: overLimit
+                  ? colors.disagree
+                  : remaining <= 20
+                  ? colors.trending
+                  : colors.textTertiary,
+              },
             ]}
           >
             {remaining}
@@ -115,13 +126,9 @@ export function CommentInput({ pollId, hasCommented, userComment, onCommentAdded
             disabled={!canSubmit}
             activeOpacity={0.8}
           >
-            {submitting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={[styles.submitText, { color: canSubmit ? '#fff' : colors.textTertiary }]}>
-                Post
-              </Text>
-            )}
+            <Text style={[styles.submitText, { color: canSubmit ? '#fff' : colors.textTertiary }]}>
+              Post
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -171,26 +178,5 @@ const styles = StyleSheet.create({
   submitText: {
     fontFamily: 'DMSans_500Medium',
     fontSize: 13,
-  },
-  lockedContainer: {
-    borderTopWidth: 0.5,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-  },
-  lockedCard: {
-    borderLeftWidth: 3,
-    paddingLeft: 10,
-    paddingVertical: 4,
-    gap: 2,
-  },
-  lockedLabel: {
-    fontFamily: 'DMSans_500Medium',
-    fontSize: 11,
-    letterSpacing: 0.5,
-  },
-  lockedText: {
-    fontFamily: 'DMSans_400Regular',
-    fontSize: 13,
-    lineHeight: 18,
   },
 });
