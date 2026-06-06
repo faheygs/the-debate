@@ -1,5 +1,5 @@
 import { useRef, useCallback } from 'react';
-import { FlatList, View, StyleSheet, RefreshControl } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { subscribeToPoll } from '@/lib/realtime';
 import { PollCard } from './PollCard';
 import { PollCardSkeleton } from './PollCardSkeleton';
@@ -75,21 +75,40 @@ export function FeedList({
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
+  const refreshControl = (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      tintColor={colors.primary}
+      colors={[colors.primary]}
+    />
+  );
+
   if (loading && polls.length === 0) {
     return (
-      <View style={styles.skeletonContainer}>
+      <ScrollView
+        refreshControl={refreshControl}
+        contentContainerStyle={styles.skeletonContainer}
+        showsVerticalScrollIndicator={false}
+      >
         {[0, 1, 2, 3, 4].map(i => <PollCardSkeleton key={i} />)}
-      </View>
+      </ScrollView>
     );
   }
 
   if (!loading && polls.length === 0) {
     return (
-      <EmptyState
-        icon="flame-outline"
-        heading="Nothing here yet"
-        subtext="Pull down to refresh or try a different mode."
-      />
+      <ScrollView
+        refreshControl={refreshControl}
+        contentContainerStyle={styles.emptyContainer}
+        showsVerticalScrollIndicator={false}
+      >
+        <EmptyState
+          icon="flame-outline"
+          heading="Nothing here yet"
+          subtext="Pull down to refresh or try a different mode."
+        />
+      </ScrollView>
     );
   }
 
@@ -110,14 +129,7 @@ export function FeedList({
       onEndReachedThreshold={0.4}
       onViewableItemsChanged={onViewableItemsChanged}
       viewabilityConfig={viewabilityConfig}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor={colors.primary}
-          colors={[colors.primary]}
-        />
-      }
+      refreshControl={refreshControl}
       showsVerticalScrollIndicator={false}
     />
   );
@@ -126,4 +138,5 @@ export function FeedList({
 const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 32 },
   skeletonContainer: { paddingHorizontal: 16, paddingTop: 12 },
+  emptyContainer: { flex: 1 },
 });

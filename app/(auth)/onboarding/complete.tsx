@@ -16,8 +16,6 @@ import { useOnboarding } from '@/hooks/useOnboarding';
 import { supabase } from '@/lib/supabase';
 import { Spacing } from '@/constants/theme';
 import type { PollType } from '@/types/app';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { TOUR_FLAG } from './welcome-tour';
 
 type SeedPollData = {
   question: string;
@@ -112,9 +110,13 @@ export default function CompleteScreen() {
 
       // Duplicate key: user row already exists (e.g. retry after a crash)
       if (insertError.code === '23505') {
-        console.log('[complete] User row already exists — checking tour flag');
-        const seenTour = await AsyncStorage.getItem(TOUR_FLAG);
-        router.replace(seenTour === 'true' ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
+        console.log('[complete] User row already exists — checking tour flag in DB');
+        const { data: existingRow } = await supabase
+          .from('users')
+          .select('has_seen_tour')
+          .eq('id', userId)
+          .maybeSingle();
+        router.replace(existingRow?.has_seen_tour ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
         return;
       }
 

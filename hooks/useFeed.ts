@@ -37,6 +37,10 @@ export function useFeed() {
     if (fetchingRef.current && !isRefresh) return;
     fetchingRef.current = true;
 
+    // ── DEBUG ──────────────────────────────────────────────────────────────
+    console.log(`[useFeed] doFetch mode=${mode} cursor=${cursor ?? 'null'} isRefresh=${isRefresh}`);
+    // ───────────────────────────────────────────────────────────────────────
+
     setState(s => ({
       ...s,
       loading: cursor === null && !isRefresh ? true : s.loading,
@@ -46,6 +50,7 @@ export function useFeed() {
 
     try {
       const data = await fetchFeed(mode, cursor);
+      console.log(`[useFeed] fetch success: ${data.polls?.length ?? 0} polls, has_more=${data.has_more}, next_cursor=${data.cursor ?? 'null'}`);
       setState(s => ({
         ...s,
         polls: isRefresh || cursor === null
@@ -56,8 +61,10 @@ export function useFeed() {
         hasMore: data.has_more,
         cursor: data.cursor,
       }));
-    } catch {
-      setState(s => ({ ...s, loading: false, refreshing: false, error: 'Failed to load feed' }));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[useFeed] fetch FAILED:', message, err);
+      setState(s => ({ ...s, loading: false, refreshing: false, error: message }));
     } finally {
       fetchingRef.current = false;
     }

@@ -46,12 +46,18 @@ routing fixes, font loading, colour system, submit screen form, sign out.
 Edge Functions built, Redis vote pipeline wired, Realtime broadcasting, 50 seed polls,
 database permissions migration, Realtime helper, full database types.
 
-### ✅ Phase 4 — Feed UI (complete)
+### ✅ Phase 4 — Feed UI (complete, post-launch fixes applied)
 
 Live feed screen with animated vote bars, optimistic voting, realtime subscriptions,
 infinite scroll, skeleton loading, and all DESIGN.md spec met.
 
-### 🔜 Phase 5 — Poll Detail (next up)
+### ✅ Phase 5 — Poll Detail (complete, post-launch fixes applied)
+
+Full poll detail screen with demographic breakdown, comment section, Claude-moderated comment input,
+flag-comment, and re-enabled card navigation from feed.
+
+Post-launch: vote state sync across screens, poll card info row (votes · voices), zero-vote state,
+"View Stats" button on detail screen, Stats screen with demographic ranked bars.
 
 ### Not started
 
@@ -92,7 +98,9 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 
 - `supabase/functions/cast-vote/index.ts` — full vote pipeline per SPEC §4
 - `supabase/functions/feed/index.ts` — paginated feed, 4 modes, Redis+PG counts
-- `supabase/functions/poll/index.ts` — full poll detail, demographics, comments
+- `supabase/functions/poll/index.ts` — poll detail, demographics, comments with attribution, has_commented, user_comment, user_demographics
+- `supabase/functions/submit-comment/index.ts` — JWT auth, ban check, duplicate check, Claude moderation (claude-sonnet-4-20250514), INSERT, Realtime broadcast
+- `supabase/functions/flag-comment/index.ts` — INSERT flag, count flags, auto-block at 3 flags
 - `supabase/functions/background-sync/index.ts` — Redis→PG sync, vote queue drain
 
 ### Components
@@ -100,7 +108,10 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 - `components/onboarding/ProgressBar.tsx`, `OptionGrid.tsx`, `PoliticsSlider.tsx`
 - `components/poll/VoteButtons.tsx` — binary + versus types, locked post-vote
 - `components/poll/PollCard.tsx` — minimal card (kept for Phase 5 reuse)
-- `components/feed/PollCard.tsx` — full feed card: category/status badges, animated vote bar, enter animation, optimistic vote
+- `components/feed/PollCard.tsx` — full feed card: category/status badges, animated vote bar, enter animation, optimistic vote; context override layer for post-vote count sync; info row "votes · voices"; zero-vote gray bar + "Be the first to vote"; card tap → `/poll/[id]`
+- `components/poll/DemographicBreakdown.tsx` — fade-in after vote, 4 rows (age/region/politics/gender), mini 4px vote bars, "not enough data" guard (min 5 votes)
+- `components/poll/CommentSection.tsx` — "Voices" heading, comment cards with attribution (age_range · region_detail · political lean label), flag button with auto-hide at 3 flags
+- `components/poll/CommentInput.tsx` — keyboard-aware bottom input, 150-char limit with counter, optimistic submit, moderation error feedback; locked view shows existing comment with indigo left border
 - `components/feed/FeedList.tsx` — FlatList wrapper, viewport tracking, per-poll Realtime subs (max 5)
 - `components/feed/FeedModeTabs.tsx` — scrollable mode pill tabs
 - `components/feed/PollCardSkeleton.tsx` — shimmer skeleton (opacity loop 0.4→0.8→0.4)
@@ -112,14 +123,16 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 
 - `hooks/useAuth.ts`, `hooks/useOnboarding.ts`
 - `hooks/useFeed.ts` — feed state, fetchFeed, loadMore, refresh, switchMode, updatePollCounts
-- `hooks/useVote.ts` — optimistic castVote, revert on failure, per-poll vote tracking
+- `hooks/useVote.ts` — optimistic castVote, revert on failure, per-poll vote tracking; persisted to AsyncStorage key `voted_polls`, loaded on mount; `initVote(pollId, value)` hydrates server-known votes without API call
+- `hooks/usePollDetail.ts` — poll detail state, realtime comment subscription, updateCounts, addComment
 - `lib/supabase.ts` — Supabase client
 - `lib/redis.ts` — Upstash Redis client
-- `lib/api.ts` — fetchFeed, castVote, fetchPoll (all auto-attach JWT from supabase.auth.getSession)
-- `lib/realtime.ts` — subscribeToFeed, subscribeToPoll, subscribeToPollComments, subscribeToUserPrivate, unsubscribeAll
+- `lib/api.ts` — fetchFeed, castVote, fetchPoll, submitComment, flagComment (all auto-attach JWT from supabase.auth.getSession)
+- `lib/realtime.ts` — subscribeToFeed, subscribeToPoll, subscribeToPollComments, subscribeToUserPrivate, unsubscribeAll; CommentBroadcast now includes age_range, region_detail, political_lean
 - `constants/colors.ts` — full DESIGN.md token system + useColors() hook
 - `types/app.ts` — OnboardingData, Poll, PollType
-- `types/database.ts` — complete DB types including PollWithCounts (now includes optional velocity field)
+- `types/database.ts` — complete DB types; PollDetailResponse includes has_commented, user_comment, user_demographics, comment_count, full_breakdown; PollWithCounts includes comment_count; DemographicGroup and FullBreakdown interfaces for stats screen
+- `contexts/PollStateContext.tsx` — global vote state store (pollId → {yes, no, total, userVote}); PollStateProvider wraps root; usePollState() hook; used by PollCard (override layer) and poll detail screen (write layer)
 
 ### Database
 
@@ -169,15 +182,21 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 2. Redis duplicate check (`user:{id}:voted:{poll_id}`) → 409 if already voted
 3. Redis INCR the appropriate counter (yes or no) + INCR total
 4. Redis SET voted flag with 30-day TTL
-5. Redis LPUSH to `poll:{id}:vote_queue` (for background-sync to drain into PostgreSQL)
-6. Supabase Realtime broadcast to `poll:{poll_id}` channel
+5. PG UPSERT into `votes` (poll_id, user_id, value) — ON CONFLICT DO NOTHING
+6. PG UPSERT into `vote_counts` with the Redis-incremented totals
+7. Supabase Realtime broadcast to `poll:{poll_id}` channel
+
+Steps 5 and 6 run in parallel via Promise.allSettled — failures are logged but do not fail the response (Redis is already authoritative). Background-sync cron and vote_queue are no longer used.
 
 ### Background sync
 
-- Triggered by pg_cron every 10 seconds (see migration 005 for setup SQL)
-- Reads all live poll IDs from PostgreSQL
-- For each: UPSERTs Redis counts into vote_counts table
-- Drains `poll:{id}:vote_queue` list: LRANGE + LTRIM, then batch INSERT into votes with ON CONFLICT DO NOTHING
+- **No longer active** — replaced by synchronous PG writes in cast-vote
+- Run in Supabase SQL Editor to remove the cron jobs:
+  ```sql
+  SELECT cron.unschedule('background-sync');
+  SELECT cron.unschedule('ranking-update');
+  ```
+- `supabase/functions/background-sync/index.ts` kept for reference but not called
 
 ### Feed function
 
@@ -194,6 +213,13 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 - Channels: `feed:global`, `poll:{id}`, `poll:{id}:comments`, `user:{id}:private`
 - Enable Realtime on `vote_counts` table in Supabase dashboard → Database → Replication
 
+### Tour seen flag
+
+- Stored as `users.has_seen_tour` (BOOLEAN NOT NULL DEFAULT FALSE) — migration 006
+- Set to `true` by `exitTour()` in `welcome-tour.tsx` via a direct Supabase update
+- Read in `app/index.tsx` routing: `SELECT id, has_seen_tour FROM users WHERE id = $userId`
+- Persists across cache clears and reinstalls — never stored in AsyncStorage
+
 ### Routing fix — getSession() not onAuthStateChange()
 
 - `_layout.tsx` calls getSession() first; onAuthStateChange skips INITIAL_SESSION
@@ -209,6 +235,13 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 
 - Primary: Indigo `#6366F1` | Agree: Emerald `#10B981` | Disagree: Rose `#F43F5E`
 - Full token system in `constants/colors.ts` — always use `useColors()`, never hardcode hex
+
+### Vote persistence
+
+- Voted polls stored in AsyncStorage under key `voted_polls` as a JSON object `{ [pollId]: 1 | -1 }`
+- Loaded on `useVote` mount — survives app restarts
+- Saved on each confirmed server response (not on optimistic update, to avoid persisting reverted votes)
+- A `votesRef` mirrors the state for use inside async callbacks — avoids stale closure without adding `votes` as a dep
 
 ### Deprecated packages — never use
 
@@ -273,6 +306,68 @@ infinite scroll, skeleton loading, and all DESIGN.md spec met.
 - `supabase/functions/background-sync/index.ts`: Redis→vote_counts UPSERT + vote queue drain
 - `lib/realtime.ts`: channel helpers for feed, poll, comments, user private channels
 - `types/database.ts`: complete TypeScript types for all tables + Edge Function response shapes
+
+### Session 14 — Phase 5 Post-Launch Fixes
+
+- `contexts/PollStateContext.tsx` (NEW): global vote state context — `updatePollCounts`, `markPollVoted`, `getPollState`; `PollStateProvider` added to root `_layout.tsx`
+- `app/poll/[id].tsx`: removed DemographicBreakdown; integrated PollStateContext (markPollVoted + updatePollCounts on vote); added "View Stats" button (only when voted, navigates to `/poll/[id]/stats`); zero-vote state (gray bar + "Be the first to vote"); count row shows "votes · voices"; `comment_count` from API
+- `app/poll/[id]/stats.tsx` (NEW): Stats screen — header (back + "Stats" + question subtitle), 2×2 summary grid (total votes, total voices, agree %, disagree %), demographic tabs (Age/Politics/Region/Gender), ranked group bars with animated fills, user's own group highlighted in indigo left border, min 5 votes guard, region top 10
+- `components/feed/PollCard.tsx`: context override layer (PollStateContext) for post-vote count sync on back navigation; info row "12.4k votes · chatbubble-outline · 847 voices" using formatVoteCount; zero-vote solid gray bar + "Be the first to vote"; removed VoteCount component import
+- `supabase/functions/feed/index.ts`: added `comment_count` to response via batched Promise.all query (approved comments only)
+- `supabase/functions/poll/index.ts`: added `full_breakdown` (sorted arrays with raw yes/no/total/yes_pct per group, region top 10); added `comment_count` (approved only); `buildDemographicBreakdown` now returns both `demographic_breakdown` (compact) and `full_breakdown` (sorted arrays)
+- `types/database.ts`: added `DemographicGroup`, `FullBreakdown` interfaces; `comment_count` to `PollWithCounts`; `comment_count` and `full_breakdown` to `PollDetailResponse`
+- All UI labels "Comments" → "Voices" (DB/API fields unchanged as `comment_count`)
+- Deploy: `supabase functions deploy feed poll` (requires `supabase link --project-ref <ref>` first)
+
+### Session 13 — Phase 5: Poll Detail Screen
+
+- `app/poll/[id].tsx`: full detail screen — back button, category badge, Syne 700 22px question, 10px spring-animated vote bar, percentage row, majority/minority text, VoteButtons, DemographicBreakdown (fade-in after vote), CommentSection, CommentInput pinned at bottom, skeleton loading, error state, KeyboardAvoidingView
+- `components/poll/DemographicBreakdown.tsx`: fade-in (400ms) after vote, 4 rows (age/region/politics/gender), each shows user's own group from user_demographics; mini 4px vote bars; "Not enough data" if group < 5 votes
+- `components/poll/CommentSection.tsx`: "Voices" heading, CommentCard with content + attribution (age_range · region_detail · political lean) + flag button; flag calls flag-comment Edge Function; auto-hides at 3 flags
+- `components/poll/CommentInput.tsx`: 150-char limit with countdown, Post button, loading state, keyboard-safe via useSafeAreaInsets; shows locked card (indigo left border) if user has already commented; moderation-blocked comments get a toast error
+- `hooks/usePollDetail.ts`: loads poll via fetchPoll, subscribes to poll:comments Realtime channel, exposes updateCounts/addComment callbacks
+- `supabase/functions/poll/index.ts`: fetches user profile alongside poll; returns user_demographics, has_commented, user_comment, comment_count (approved only), demographic_breakdown (keyed compact form), full_breakdown (sorted arrays with raw yes/no/total per group, region capped at 10, all groups filtered to ≥5 votes on client)
+- `supabase/functions/submit-comment/index.ts`: full implementation — JWT auth, comment_banned check, DB + Redis duplicate guard, poll question fetch, Claude moderation (claude-sonnet-4-20250514, fail-open), INSERT comment, Redis TTL flag, Realtime broadcast with attribution fields
+- `supabase/functions/flag-comment/index.ts`: full implementation — JWT auth, comment existence check, INSERT flag (ignore duplicate 23505), count flags, auto-block comment at 3 flags
+- `lib/api.ts`: fixed fetchPoll bug (replaced non-existent authHeaders() with getToken()); added submitComment(pollId, content), flagComment(commentId)
+- `lib/realtime.ts`: updated CommentBroadcast type — comment now includes region_detail and political_lean for client-side attribution display
+- `types/database.ts`: expanded PublicComment with age_range, region_detail, political_lean; added UserDemographics interface; updated PollDetailResponse with has_commented, user_comment, user_demographics, fixed user_vote type to 1 | -1 | null
+- `components/feed/PollCard.tsx`: re-enabled navigation — outer View replaced with TouchableOpacity + router.push('/poll/' + poll.id)
+- Deploy: `supabase functions deploy submit-comment flag-comment poll`
+
+### Session 12 — Tour Flag Moved to PostgreSQL
+
+- `supabase/migrations/006_user_tour_flag.sql`: `ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tour BOOLEAN NOT NULL DEFAULT FALSE`
+- `app/index.tsx`: removed `AsyncStorage.clear()` debug line and all AsyncStorage/TOUR_FLAG usage; select now includes `has_seen_tour`; routing reads from DB field directly
+- `app/(auth)/onboarding/welcome-tour.tsx`: removed `TOUR_FLAG` export and `AsyncStorage` import; `exitTour()` now calls `supabase.from('users').update({ has_seen_tour: true })` then routes to tabs
+- `app/(auth)/onboarding/complete.tsx`: removed `AsyncStorage` and `TOUR_FLAG` imports; duplicate-key branch now queries `has_seen_tour` from DB instead of AsyncStorage
+- `app/(tabs)/board.tsx`: removed `AsyncStorage.removeItem(TOUR_FLAG)` from sign-out (flag lives in DB now, persists correctly across sessions)
+- `types/database.ts`: added `has_seen_tour: boolean` to `DbUser`
+- Deploy: `supabase db push` to apply migration 006
+
+### Session 11 — Synchronous PG Writes in cast-vote
+
+- `supabase/functions/cast-vote/index.ts`: removed vote_queue LPUSH; added synchronous PG writes for `votes` and `vote_counts` tables using Promise.allSettled (best-effort — Redis already committed, PG failures are logged but don't fail the response)
+- Architecture change: vote_counts is now a near-real-time PG mirror updated on every vote rather than a periodic snapshot; background-sync cron is no longer needed
+- Cron jobs to unschedule in Supabase SQL Editor: `SELECT cron.unschedule('background-sync');` and `SELECT cron.unschedule('ranking-update');`
+- Deploy command: `supabase functions deploy cast-vote`
+
+### Session 10 — Voted State Hydration from Server
+
+- `supabase/functions/feed/index.ts`: after slicing the page polls, runs one batch PG query (`SELECT poll_id, value FROM votes WHERE user_id = $id AND poll_id IN (...)`) to get the user's vote directions for this page; attaches `user_vote: 1 | -1 | null` to every poll in the response (both Redis-hit and vote_counts-fallback paths)
+- `types/database.ts`: added `user_vote: 1 | -1 | null` to `PollWithCounts` and to the local `PollWithCounts` interface in the feed function
+- `hooks/useVote.ts`: added `initVote(pollId, value)` — hydrates a known vote into the map + AsyncStorage without calling the API; idempotent (skips if already known)
+- `app/(tabs)/index.tsx`: added `useEffect` on `feed.polls` that calls `initVote` for every poll with a non-null `user_vote`; runs on initial load, refresh, and load-more
+- Note: Redis voted key (`user:{id}:voted:{poll_id}`) stores only `"1"` (a boolean flag), not the vote direction — the votes table is the authoritative source for the actual value
+
+### Session 9 — Phase 4 Post-Launch Fixes
+
+- Removed all emoji from UI — status badges (Trending/Hot/Fresh/Closing) now use Ionicons (flame-outline / flash-outline / sparkles-outline / time-outline) with icon + label side by side
+- Disabled poll card tap navigation to prevent Phase 5 crash; TODO comment marks where to re-enable
+- Fixed pull-to-refresh on empty and skeleton states — wrapped both in ScrollView with RefreshControl
+- Added debug logging to lib/api.ts (JWT, URL, response body) and hooks/useFeed.ts (errors, poll count)
+- Fixed feed Edge Function: Redis errors now caught per-poll (fallback to vote_counts table); added server-side logging; added for_you to FeedMode type
+- Vote persistence: hooks/useVote.ts now loads voted state from AsyncStorage on mount and saves on each confirmed vote; uses a ref to avoid stale closure in async callbacks
 
 ### Session 8 — Phase 4: Feed UI
 

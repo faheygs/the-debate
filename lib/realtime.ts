@@ -70,7 +70,8 @@ export type CommentBroadcast = {
     id: string;
     content: string;
     age_range: string | null;
-    region: string | null;
+    region_detail: string | null;
+    political_lean: number | null;
     created_at: string;
   };
 };

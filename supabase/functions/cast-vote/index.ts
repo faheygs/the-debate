@@ -46,14 +46,14 @@ Deno.serve(async (req) => {
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
     });
 
-    // Duplicate-vote check
+    // Duplicate-vote check — Redis is the fast gate
     const voteKey = `user:${userId}:voted:${poll_id}`;
     const alreadyVoted = await redis.get(voteKey);
     if (alreadyVoted) {
       return json({ error: "Already voted on this poll" }, 409);
     }
 
-    // Increment counters
+    // Increment Redis counters
     let yesCount: number;
     let noCount: number;
 
@@ -66,14 +66,44 @@ Deno.serve(async (req) => {
     }
     const total = await redis.incr(`poll:${poll_id}:total`);
 
-    // Mark voted (30-day TTL) + queue for background sync
-    await Promise.all([
-      redis.set(voteKey, "1", { ex: VOTED_TTL }),
-      redis.lpush(
-        `poll:${poll_id}:vote_queue`,
-        JSON.stringify({ user_id: userId, value, created_at: new Date().toISOString() }),
-      ),
+    // Mark voted in Redis (30-day TTL) — must succeed before we return
+    await redis.set(voteKey, "1", { ex: VOTED_TTL });
+
+    // ── PostgreSQL writes (synchronous, best-effort) ───────────────────────
+    // Both writes run in parallel. Failures are logged but do not fail the
+    // request — Redis is already updated and the user's vote is counted.
+    const [votesResult, countsResult] = await Promise.allSettled([
+      // Record the individual vote
+      supabase
+        .from("votes")
+        .upsert(
+          { poll_id, user_id: userId, value },
+          { onConflict: "poll_id,user_id", ignoreDuplicates: true },
+        )
+        .then(({ error }) => { if (error) throw error; }),
+
+      // Keep vote_counts as a near-real-time PG mirror of Redis totals
+      supabase
+        .from("vote_counts")
+        .upsert(
+          {
+            poll_id,
+            yes_count: yesCount,
+            no_count: noCount,
+            total_count: total,
+            last_synced_at: new Date().toISOString(),
+          },
+          { onConflict: "poll_id" },
+        )
+        .then(({ error }) => { if (error) throw error; }),
     ]);
+
+    if (votesResult.status === "rejected") {
+      console.warn("[cast-vote] votes upsert failed:", String(votesResult.reason));
+    }
+    if (countsResult.status === "rejected") {
+      console.warn("[cast-vote] vote_counts upsert failed:", String(countsResult.reason));
+    }
 
     // ── Realtime broadcast ────────────────────────────────────────────────
     await supabase.channel(`poll:${poll_id}`).send({

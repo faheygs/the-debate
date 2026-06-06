@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, Animated, StyleSheet, useColorScheme } from 'react-native';
+import { View, Text, Animated, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/constants/colors';
 import { VoteButtons } from '@/components/poll/VoteButtons';
-import { VoteCount } from '@/components/shared/VoteCount';
+import { formatVoteCount } from '@/components/shared/VoteCount';
+import { usePollState } from '@/contexts/PollStateContext';
 import type { PollWithCounts } from '@/types/database';
 
 // ── Category badge colors ────────────────────────────────────────────────────
@@ -36,24 +38,32 @@ const CATEGORY_DARK: Record<string, { bg: string; text: string }> = {
 
 // ── Status badge ─────────────────────────────────────────────────────────────
 
-function getStatusBadge(poll: PollWithCounts, velocity?: number): { label: string; bg: string; textColor: string } | null {
-  const total = poll.total_count;
-  const yesPct = total > 0 ? poll.yes_count / total : 0.5;
-  const controversy = 1 - Math.abs(yesPct - 0.5) * 2;
+type StatusBadge = {
+  label: string;
+  iconName: React.ComponentProps<typeof Ionicons>['name'];
+  bg: string;
+  textColor: string;
+};
 
-  if (velocity && velocity > 500) return { label: '🔥 Trending', bg: '#FEF3C7', textColor: '#92400E' };
-  if (velocity && velocity > 100) return { label: '⚡ Hot', bg: '#FEF3C7', textColor: '#92400E' };
-
+function getStatusBadge(poll: PollWithCounts, velocity?: number): StatusBadge | null {
+  if (velocity && velocity > 500) {
+    return { label: 'Trending', iconName: 'flame-outline', bg: '#FEF3C7', textColor: '#92400E' };
+  }
+  if (velocity && velocity > 100) {
+    return { label: 'Hot', iconName: 'flash-outline', bg: '#FEF3C7', textColor: '#92400E' };
+  }
   if (poll.expires_at) {
     const msLeft = new Date(poll.expires_at).getTime() - Date.now();
-    if (msLeft < 2 * 60 * 60 * 1000) return { label: '⏰ Closing', bg: '#FFF1F2', textColor: '#E11D48' };
+    if (msLeft < 2 * 60 * 60 * 1000) {
+      return { label: 'Closing', iconName: 'time-outline', bg: '#FFF1F2', textColor: '#E11D48' };
+    }
   }
-
   if (poll.promoted_at) {
     const ageHours = (Date.now() - new Date(poll.promoted_at).getTime()) / (60 * 60 * 1000);
-    if (ageHours < 6) return { label: '🆕 Fresh', bg: '#EEF2FF', textColor: '#4338CA' };
+    if (ageHours < 6) {
+      return { label: 'Fresh', iconName: 'sparkles-outline', bg: '#EEF2FF', textColor: '#4338CA' };
+    }
   }
-
   return null;
 }
 
@@ -95,6 +105,13 @@ interface Props {
 export function PollCard({ poll, index, userVote, onVote }: Props) {
   const colors = useColors();
   const isDark = useColorScheme() === 'dark';
+  const ctx = usePollState();
+  const override = ctx.getPollState(poll.id);
+
+  // Context overrides feed data so post-vote counts reflect immediately on back navigation
+  const total = override?.total_count ?? poll.total_count;
+  const yes = override?.yes_count ?? poll.yes_count;
+  const effectiveVote = override?.user_vote ?? userVote;
 
   // Enter animation — staggered fade + 4px slide up
   const enterOpacity = useRef(new Animated.Value(0)).current;
@@ -110,8 +127,8 @@ export function PollCard({ poll, index, userVote, onVote }: Props) {
     }, delay);
   }, []);
 
-  const total = poll.total_count;
-  const yesPct = total > 0 ? (poll.yes_count / total) * 100 : 50;
+  const yesPct = total > 0 ? (yes / total) * 100 : 50;
+  const commentCount = poll.comment_count ?? 0;
 
   const catColors = (isDark ? CATEGORY_DARK : CATEGORY_LIGHT)[poll.category] ??
     (isDark ? CATEGORY_DARK.news : CATEGORY_LIGHT.news);
@@ -120,57 +137,74 @@ export function PollCard({ poll, index, userVote, onVote }: Props) {
 
   return (
     <Animated.View
-      style={{
-        opacity: enterOpacity,
-        transform: [{ translateY: enterTranslate }],
-      }}
+      style={{ opacity: enterOpacity, transform: [{ translateY: enterTranslate }] }}
     >
       <TouchableOpacity
-        style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        activeOpacity={0.92}
         onPress={() => router.push(`/poll/${poll.id}`)}
-        activeOpacity={0.95}
       >
-        {/* Header row */}
-        <View style={styles.header}>
-          <View style={[styles.badge, { backgroundColor: catColors.bg }]}>
-            <Text style={[styles.badgeText, { color: catColors.text }]}>
-              {poll.category.toUpperCase()}
-            </Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+
+          {/* Header row — category badge left, status badge right */}
+          <View style={styles.header}>
+            <View style={[styles.badge, { backgroundColor: catColors.bg }]}>
+              <Text style={[styles.badgeText, { color: catColors.text }]}>
+                {poll.category.toUpperCase()}
+              </Text>
+            </View>
+            {statusBadge && (
+              <View style={[styles.badge, styles.badgeRow, { backgroundColor: statusBadge.bg }]}>
+                <Ionicons name={statusBadge.iconName} size={10} color={statusBadge.textColor} />
+                <Text style={[styles.badgeText, { color: statusBadge.textColor }]}>
+                  {statusBadge.label}
+                </Text>
+              </View>
+            )}
           </View>
-          {statusBadge && (
-            <View style={[styles.badge, { backgroundColor: statusBadge.bg }]}>
-              <Text style={[styles.badgeText, { color: statusBadge.textColor }]}>
-                {statusBadge.label}
+
+          {/* Poll question */}
+          <Text
+            style={[styles.question, { color: colors.text }]}
+            numberOfLines={2}
+            ellipsizeMode="tail"
+          >
+            {poll.question}
+          </Text>
+
+          {/* Vote bar — solid gray when 0 votes */}
+          {total === 0 ? (
+            <View style={[barStyles.track, { backgroundColor: colors.surfaceAlt }]} />
+          ) : (
+            <VoteBar yesPct={yesPct} colors={colors} />
+          )}
+
+          {/* Info row — "votes · voices" or zero-state prompt */}
+          {total === 0 ? (
+            <Text style={[styles.infoText, { color: colors.textTertiary }]}>
+              Be the first to vote
+            </Text>
+          ) : (
+            <View style={styles.infoRow}>
+              <Text style={[styles.infoText, { color: colors.textTertiary }]}>
+                {formatVoteCount(total)} votes
+              </Text>
+              <Text style={[styles.infoText, { color: colors.textTertiary }]}>{' · '}</Text>
+              <Ionicons name="chatbubble-outline" size={11} color={colors.textTertiary} />
+              <Text style={[styles.infoText, { color: colors.textTertiary }]}>
+                {' '}{formatVoteCount(commentCount)} voices
               </Text>
             </View>
           )}
-        </View>
 
-        {/* Question */}
-        <Text
-          style={[styles.question, { color: colors.text }]}
-          numberOfLines={2}
-          ellipsizeMode="tail"
-        >
-          {poll.question}
-        </Text>
-
-        {/* Vote bar */}
-        <VoteBar yesPct={yesPct} colors={colors} />
-
-        {/* Count */}
-        <VoteCount total={total} velocity={poll.velocity} />
-
-        {/* Buttons — stop propagation so card tap doesn't also fire */}
-        <TouchableOpacity activeOpacity={1} onPress={e => e.stopPropagation()}>
+          {/* Vote buttons */}
           <VoteButtons
             pollType={poll.poll_type as any}
             optionA={poll.option_a}
             optionB={poll.option_b}
-            userVote={userVote}
+            userVote={effectiveVote}
             onVote={v => onVote(poll.id, v)}
           />
-        </TouchableOpacity>
+        </View>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -194,6 +228,11 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 4,
   },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
   badgeText: {
     fontFamily: 'DMSans_500Medium',
     fontSize: 10,
@@ -203,5 +242,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Syne_700Bold',
     fontSize: 17,
     lineHeight: 22,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoText: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 11,
   },
 });

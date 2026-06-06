@@ -20,12 +20,22 @@ export default function FeedScreen() {
     setToast({ message, variant });
   }, []);
 
-  const { getUserVote, vote } = useVote(feed.updatePollCounts, showToast);
+  const { getUserVote, vote, initVote } = useVote(feed.updatePollCounts, showToast);
 
   // Load feed on mount
   useEffect(() => {
     feed.initialLoad();
   }, []);
+
+  // Hydrate voted state from server-returned user_vote on every page load/refresh.
+  // initVote is idempotent — skips polls already in the voted map.
+  useEffect(() => {
+    for (const poll of feed.polls) {
+      if (poll.user_vote != null) {
+        initVote(poll.id, poll.user_vote);
+      }
+    }
+  }, [feed.polls]);
 
   // Realtime feed:global subscription
   useEffect(() => {

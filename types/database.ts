@@ -18,6 +18,7 @@ export interface DbUser {
   education_level: string | null;
   comment_strikes: number;
   comment_banned: boolean;
+  has_seen_tour: boolean;
   created_at: string;
   last_active_at: string;
 }
@@ -98,6 +99,23 @@ export interface PollWithCounts extends DbPoll {
   no_count: number;
   total_count: number;
   velocity?: number;
+  user_vote: 1 | -1 | null;
+  comment_count?: number;
+}
+
+export interface DemographicGroup {
+  label: string;
+  yes: number;
+  no: number;
+  total: number;
+  yes_pct: number;
+}
+
+export interface FullBreakdown {
+  age: DemographicGroup[];
+  region: DemographicGroup[];
+  politics: DemographicGroup[];
+  gender: DemographicGroup[];
 }
 
 export interface FeedResponse {
@@ -129,6 +147,17 @@ export interface PublicComment {
   id: string;
   content: string;
   created_at: string;
+  age_range: string | null;
+  region_detail: string | null;
+  political_lean: number | null;
+}
+
+export interface UserDemographics {
+  age_group: string | null;
+  region: string | null;
+  region_detail: string | null;
+  politics_label: string | null;
+  gender: string | null;
 }
 
 export interface PollDetailResponse {
@@ -136,9 +165,14 @@ export interface PollDetailResponse {
   yes_count: number;
   no_count: number;
   total_count: number;
-  user_vote: number | null;
+  comment_count: number;
+  user_vote: 1 | -1 | null;
   demographic_breakdown: DemographicBreakdown;
+  full_breakdown: FullBreakdown;
+  user_demographics: UserDemographics;
   comments: PublicComment[];
+  has_commented: boolean;
+  user_comment: string | null;
 }
 
 // ── Database helper type (for supabase client generics) ───────────────────

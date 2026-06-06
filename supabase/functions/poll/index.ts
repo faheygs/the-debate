@@ -36,20 +36,25 @@ Deno.serve(async (req) => {
       return json({ error: "Poll ID required" }, 400);
     }
 
-    // ── Fetch poll metadata ───────────────────────────────────────────────
-    const { data: poll, error: pollError } = await supabase
-      .from("polls")
-      .select("*")
-      .eq("id", pollId)
-      .maybeSingle();
+    // ── Fetch poll + user profile in parallel ─────────────────────────────
+    const [pollResult, profileResult] = await Promise.all([
+      supabase.from("polls").select("*").eq("id", pollId).maybeSingle(),
+      supabase
+        .from("users")
+        .select("age_range, region, region_detail, political_lean, gender")
+        .eq("id", userId)
+        .maybeSingle(),
+    ]);
 
-    if (pollError) {
-      console.error("[poll] DB error:", pollError);
+    if (pollResult.error) {
+      console.error("[poll] DB error:", pollResult.error);
       return json({ error: "Failed to fetch poll" }, 500);
     }
-    if (!poll) {
+    if (!pollResult.data) {
       return json({ error: "Poll not found" }, 404);
     }
+    const poll = pollResult.data;
+    const profile = profileResult.data;
 
     // ── Current counts: Redis first, fallback to vote_counts ─────────────
     const redis = new Redis({
@@ -83,10 +88,17 @@ Deno.serve(async (req) => {
       totalCount = vc?.total_count ?? 0;
     }
 
-    // ── User's own vote (Redis check + DB fallback) ───────────────────────
+    // ── User's own vote (Redis flag + DB fallback) ────────────────────────
     let userVote: number | null = null;
     if (userVotedFlag) {
-      // Redis has the flag but not the value — check DB for actual vote value
+      const { data: voteRow } = await supabase
+        .from("votes")
+        .select("value")
+        .eq("poll_id", pollId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      userVote = voteRow?.value ?? null;
+    } else {
       const { data: voteRow } = await supabase
         .from("votes")
         .select("value")
@@ -96,31 +108,73 @@ Deno.serve(async (req) => {
       userVote = voteRow?.value ?? null;
     }
 
-    // ── Demographic breakdown from votes table ────────────────────────────
-    const { data: voteRows } = await supabase
-      .from("votes")
-      .select("value, users(age_range, region, political_lean, gender)")
-      .eq("poll_id", pollId);
+    // ── Demographic breakdown + comment counts + user comment ─────────────
+    const [voteRowsResult, rawCommentsResult, myCommentResult, commentCountResult] =
+      await Promise.all([
+        supabase
+          .from("votes")
+          .select("value, users(age_range, region, political_lean, gender)")
+          .eq("poll_id", pollId),
+        supabase
+          .from("comments")
+          .select("id, content, created_at, users:user_id(age_range, region_detail, political_lean)")
+          .eq("poll_id", pollId)
+          .eq("ai_decision", "approved")
+          .order("created_at", { ascending: false })
+          .limit(50),
+        supabase
+          .from("comments")
+          .select("id, content")
+          .eq("poll_id", pollId)
+          .eq("user_id", userId)
+          .maybeSingle(),
+        supabase
+          .from("comments")
+          .select("id", { count: "exact", head: true })
+          .eq("poll_id", pollId)
+          .eq("ai_decision", "approved"),
+      ]);
 
-    const breakdown = buildDemographicBreakdown(voteRows ?? []);
+    const { demographic_breakdown, full_breakdown } = buildDemographicBreakdown(
+      voteRowsResult.data ?? [],
+    );
 
-    // ── Approved comments (no user_id exposed) ────────────────────────────
-    const { data: comments } = await supabase
-      .from("comments")
-      .select("id, content, created_at")
-      .eq("poll_id", pollId)
-      .eq("ai_decision", "approved")
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const comments = (rawCommentsResult.data ?? []).map((c: any) => ({
+      id: c.id,
+      content: c.content,
+      created_at: c.created_at,
+      age_range: c.users?.age_range ?? null,
+      region_detail: c.users?.region_detail ?? null,
+      political_lean: c.users?.political_lean ?? null,
+    }));
+
+    const myComment = myCommentResult.data;
+    const commentCount = commentCountResult.count ?? 0;
+
+    // ── User demographics for Stats screen ────────────────────────────────
+    const userDemographics = {
+      age_group: profile?.age_range ?? null,
+      region: profile?.region ?? null,
+      region_detail: profile?.region_detail ?? null,
+      politics_label: profile?.political_lean != null
+        ? politicalLabel(profile.political_lean)
+        : null,
+      gender: profile?.gender ?? null,
+    };
 
     return json({
       poll,
       yes_count: yesCount,
       no_count: noCount,
       total_count: totalCount,
+      comment_count: commentCount,
       user_vote: userVote,
-      demographic_breakdown: breakdown,
-      comments: comments ?? [],
+      demographic_breakdown,
+      full_breakdown,
+      user_demographics: userDemographics,
+      comments,
+      has_commented: myComment !== null,
+      user_comment: myComment?.content ?? null,
     });
   } catch (err) {
     console.error("[poll]", err);
@@ -133,18 +187,20 @@ type VoteRow = {
   users: { age_range: string | null; region: string | null; political_lean: number | null; gender: string | null } | null;
 };
 
+type GroupCounts = Record<string, { yes: number; no: number }>;
+
 function buildDemographicBreakdown(votes: VoteRow[]) {
-  const byAge: Record<string, { yes: number; no: number }> = {};
-  const byRegion: Record<string, { yes: number; no: number }> = {};
-  const byPolitics: Record<string, { yes: number; no: number }> = {};
-  const byGender: Record<string, { yes: number; no: number }> = {};
+  const byAge: GroupCounts = {};
+  const byRegion: GroupCounts = {};
+  const byPolitics: GroupCounts = {};
+  const byGender: GroupCounts = {};
 
   for (const v of votes) {
     const isYes = v.value === 1;
     const u = v.users;
     if (!u) continue;
 
-    const bump = (group: Record<string, { yes: number; no: number }>, key: string | null) => {
+    const bump = (group: GroupCounts, key: string | null) => {
       if (!key) return;
       group[key] ??= { yes: 0, no: 0 };
       isYes ? group[key].yes++ : group[key].no++;
@@ -154,12 +210,12 @@ function buildDemographicBreakdown(votes: VoteRow[]) {
     bump(byRegion, u.region);
     bump(byGender, u.gender);
     if (u.political_lean !== null) {
-      const label = politicalLabel(u.political_lean);
-      bump(byPolitics, label);
+      bump(byPolitics, politicalLabel(u.political_lean));
     }
   }
 
-  const toPct = (group: Record<string, { yes: number; no: number }>) =>
+  // Compact form (used by DemographicBreakdown component)
+  const toPct = (group: GroupCounts) =>
     Object.fromEntries(
       Object.entries(group).map(([k, v]) => {
         const total = v.yes + v.no;
@@ -167,11 +223,29 @@ function buildDemographicBreakdown(votes: VoteRow[]) {
       }),
     );
 
+  // Full form sorted by total desc (used by Stats screen)
+  const toSortedArray = (group: GroupCounts) =>
+    Object.entries(group)
+      .map(([label, v]) => {
+        const total = v.yes + v.no;
+        const yes_pct = total > 0 ? Math.round((v.yes / total) * 100) : 0;
+        return { label, yes: v.yes, no: v.no, total, yes_pct };
+      })
+      .sort((a, b) => b.total - a.total);
+
   return {
-    age: toPct(byAge),
-    region: toPct(byRegion),
-    politics: toPct(byPolitics),
-    gender: toPct(byGender),
+    demographic_breakdown: {
+      age: toPct(byAge),
+      region: toPct(byRegion),
+      politics: toPct(byPolitics),
+      gender: toPct(byGender),
+    },
+    full_breakdown: {
+      age: toSortedArray(byAge),
+      region: toSortedArray(byRegion).slice(0, 10),
+      politics: toSortedArray(byPolitics),
+      gender: toSortedArray(byGender),
+    },
   };
 }
 

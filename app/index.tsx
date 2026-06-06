@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
-import { TOUR_FLAG } from './(auth)/onboarding/welcome-tour';
 
 type AppRoute =
   | '/(auth)/auth'
@@ -24,7 +22,7 @@ export default function IndexScreen() {
 
       const { data: userRow } = await supabase
         .from('users')
-        .select('id')
+        .select('id, has_seen_tour')
         .eq('id', session.user.id)
         .maybeSingle();
 
@@ -33,9 +31,7 @@ export default function IndexScreen() {
         return;
       }
 
-      // User has an account — check if they've seen the welcome tour
-      const seenTour = await AsyncStorage.getItem(TOUR_FLAG);
-      setRoute(seenTour === 'true' ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
+      setRoute(userRow.has_seen_tour ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
     }
 
     resolveRoute();

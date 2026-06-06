@@ -10,6 +10,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { AuthContext } from '@/hooks/useAuth';
+import { PollStateProvider } from '@/contexts/PollStateContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -69,9 +70,11 @@ export default function RootLayout() {
     <AuthContext.Provider
       value={{ session, user: session?.user ?? null, loading, signIn, signUp, signOut }}
     >
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack screenOptions={{ headerShown: false }} />
-      </ThemeProvider>
+      <PollStateProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack screenOptions={{ headerShown: false }} />
+        </ThemeProvider>
+      </PollStateProvider>
     </AuthContext.Provider>
   );
 }

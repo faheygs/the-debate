@@ -12,10 +12,8 @@ import {
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '@/lib/supabase';
 import { useColors, type AppColors } from '@/constants/colors';
-
-export const TOUR_FLAG = 'has_seen_welcome_tour';
 
 type SlideData = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -52,7 +50,13 @@ const SLIDES: SlideData[] = [
 ];
 
 async function exitTour() {
-  await AsyncStorage.setItem(TOUR_FLAG, 'true');
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) {
+    await supabase
+      .from('users')
+      .update({ has_seen_tour: true })
+      .eq('id', session.user.id);
+  }
   router.replace('/(tabs)');
 }
 
