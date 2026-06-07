@@ -74,9 +74,19 @@ migration 007 indexes. Claude moderation disabled for beta (auto-approve all).
 - `supabase/functions/submit-comment/index.ts`: ban check + DB duplicate + Redis duplicate all in parallel `Promise.all`; Realtime broadcast is fire-and-forget; timing logs; Cache-Control header
 - `supabase/migrations/008_performance_indexes.sql`: `idx_polls_status_promoted`, `idx_votes_user_polls`, `idx_comments_poll_decision`, `idx_votes_poll_id`
 
+### ✅ Phase 7 — Submit Poll (complete, fixes applied)
+
+Full submit flow: form → toast → form reset. Edge Functions submit-poll + upvote-poll built. Review tab in feed with pending poll cards + upvote buttons. Promotion at 10 upvotes.
+
+Phase 7 fixes (Session 20):
+- Removed "Scale 1-5" poll type — only binary and versus
+- Category selector replaced with bottom-sheet modal (React Native Modal + FlatList, 11 categories incl. "Other", color dot indicators, "[Category] ▾" selector button)
+- Success screen removed — on submit success shows emerald Toast "Your debate is live!" and resets form
+- submit-poll auto-approves: status='live', promoted_at=NOW(), expires_at=NOW()+30days, ZADD feed:trending score=10, Realtime broadcast feed:global
+- types/database.ts: SubmitPollResponse.status updated to "live" | "pending"
+
 ### Not started
 
-- [ ] Phase 7 — Submit Poll (form UI exists; edge function not built)
 - [ ] Phase 8 — Personal Board (sign out button is placeholder)
 - [ ] Phase 9 — Search
 - [ ] Phase 10 — Polish + Push Notifications
@@ -111,11 +121,13 @@ migration 007 indexes. Claude moderation disabled for beta (auto-approve all).
 ### Edge Functions (Deno, npm: imports)
 
 - `supabase/functions/cast-vote/index.ts` — full vote pipeline per SPEC §4
-- `supabase/functions/feed/index.ts` — paginated feed, 4 modes, Redis+PG counts
+- `supabase/functions/feed/index.ts` — paginated feed, 5 modes (trending/closest/fresh/for_you/review), Redis+PG counts, user_upvoted for review mode
 - `supabase/functions/poll/index.ts` — poll detail, demographics, comments with attribution, has_commented, user_comment, user_demographics
 - `supabase/functions/submit-comment/index.ts` — JWT auth, ban check, duplicate check, Claude moderation (claude-sonnet-4-20250514), INSERT, Realtime broadcast
 - `supabase/functions/flag-comment/index.ts` — INSERT flag, count flags, auto-block at 3 flags
-- `supabase/functions/background-sync/index.ts` — Redis→PG sync, vote queue drain
+- `supabase/functions/submit-poll/index.ts` — JWT auth, validation, INSERT polls status='live' (auto-approved), promoted_at+expires_at set, Redis ZADD feed:trending, Realtime broadcast feed:global
+- `supabase/functions/upvote-poll/index.ts` — INSERT poll_upvotes, count-based promotion at 10 upvotes, Realtime broadcast on promotion
+- `supabase/functions/background-sync/index.ts` — Redis→PG sync, vote queue drain (inactive)
 
 ### Components
 
@@ -321,6 +333,36 @@ Steps 5 and 6 run in parallel via Promise.allSettled — failures are logged but
 - `supabase/functions/background-sync/index.ts`: Redis→vote_counts UPSERT + vote queue drain
 - `lib/realtime.ts`: channel helpers for feed, poll, comments, user private channels
 - `types/database.ts`: complete TypeScript types for all tables + Edge Function response shapes
+
+### Session 21 — Fix: New Poll Instant Feed Prepend
+
+- `lib/realtime.ts`: `subscribeToFeed` now listens for both `"feed_delta"` and `"new_poll"` broadcast events on the `feed:global` channel — submit-poll broadcasts `"new_poll"` but the subscription only handled `"feed_delta"`, so new polls never fired the handler
+- `lib/api.ts`: added `fetchSinglePoll(pollId)` — calls the `poll` Edge Function, maps `PollDetailResponse` → `PollWithCounts` shape for feed array compatibility
+- `hooks/useFeed.ts`: added `prependPoll(poll)` — prepends a single poll to the front of the polls array with dedup guard (skips if id already present)
+- `app/(tabs)/index.tsx`: updated `feed:global` subscription handler — when `delta.new` arrives, fetches each poll_id via `fetchSinglePoll` and calls `feed.prependPoll`; falls back to `feed.refresh()` only if fetch fails; no full reload on normal new-poll events
+
+### Session 20 — Phase 7 Fixes: Submit Screen
+
+- `app/(tabs)/submit.tsx`: removed "Scale 1-5" poll type (POLL_TYPES now binary + versus only); removed category grid, replaced with TouchableOpacity selector button + React Native Modal bottom sheet (FlatList of 11 categories incl. "Other", color dot per category, checkmark on selected); removed `submitted` state and success screen branch entirely; removed `router` import; added `toast` state; handleSubmit is fire-and-forget — on success shows emerald Toast "Your debate is live!" + resetForm(), on failure shows rose Toast with error message
+- `supabase/functions/submit-poll/index.ts`: added "other" to VALID_CATEGORIES; removed "scale" from VALID_TYPES; INSERT now sets status='live', promoted_at=NOW(), expires_at=NOW()+30days; Redis ZADD to feed:trending with score=10 (was feed:pending score=0); added Realtime broadcast to feed:global channel with {new: [poll_id]}; returns {poll_id, status:'live'}
+- `types/database.ts`: SubmitPollResponse.status widened to "live" | "pending"
+- Deploy: `supabase functions deploy submit-poll`
+
+### Session 19 — Phase 7: Submit Poll
+
+- `app/(tabs)/submit.tsx`: full rewrite — "Start a Debate" header (Syne 700 24px), DM Sans 13px subtitle, Syne 700 question input, "X / 150" char counter (rose when > 130), 3-way poll type row (Agree/Disagree | Would You Rather | Scale 1-5), category grid with category-specific colors on selected state, 52px Submit button with ActivityIndicator loading state, optimistic success screen (checkmark-circle icon, "Your debate is in review" heading, "Back to Feed" + "Start Another" buttons); fire-and-forget API pattern with revert on failure
+- `supabase/functions/submit-poll/index.ts`: JWT auth, validation (question >10 chars ≤150, valid category, option_a/b required for versus ≤50 chars), INSERT polls (status='pending', submitted_by=userId), Redis ZADD feed:pending fire-and-forget; returns {poll_id, status:'pending'}
+- `supabase/functions/upvote-poll/index.ts`: JWT auth, verify poll pending, INSERT poll_upvotes (PK conflict → 409), parallel Redis INCR + count DB upvotes, atomic promotion at 10 upvotes (UPDATE WHERE status='pending'), Redis ZADD feed:trending + Realtime broadcast on promotion; returns {upvoted, promoted, upvote_count}
+- `supabase/functions/feed/index.ts`: added 'review' mode — queries pending polls by created_at DESC, batches user upvote check (poll_upvotes) in parallel with votes + comment counts, adds user_upvoted to response; fixed pending mode cursor to use created_at not promoted_at
+- `hooks/useFeed.ts`: added 'review' to FeedMode, added updatePollUpvote(pollId, count, userUpvoted) for optimistic upvote state
+- `components/feed/FeedModeTabs.tsx`: added "In Review" tab
+- `components/feed/PollCard.tsx`: added pending card rendering — "In Review" badge, upvote progress bar (indigo fill), "{N} more upvotes to go live" text, thumbs-up button (filled when upvoted, disabled after upvoting); live cards unchanged
+- `components/feed/FeedList.tsx`: added onUpvote? prop, passes through to PollCard
+- `app/(tabs)/index.tsx`: added handleUpvote — optimistic count increment, API fire-and-forget, refresh feed on promotion, revert on error
+- `lib/api.ts`: added submitPoll(), upvotePoll()
+- `types/database.ts`: added user_upvoted? to PollWithCounts, SubmitPollResponse, UpvotePollResponse
+- `supabase/migrations/009_submit_poll_permissions.sql`: GRANT INSERT/SELECT on polls, poll_upvotes; indexes for pending feed queries
+- Deploy: supabase functions deploy submit-poll upvote-poll feed + supabase db push
 
 ### Session 18 — Performance Pass
 

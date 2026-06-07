@@ -101,6 +101,18 @@ export interface PollWithCounts extends DbPoll {
   velocity?: number;
   user_vote: 1 | -1 | null;
   comment_count?: number;
+  user_upvoted?: boolean;
+}
+
+export interface SubmitPollResponse {
+  poll_id: string;
+  status: "live" | "pending";
+}
+
+export interface UpvotePollResponse {
+  upvoted: boolean;
+  promoted: boolean;
+  upvote_count: number;
 }
 
 export interface DemographicGroup {

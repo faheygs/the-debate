@@ -32,6 +32,10 @@ export function subscribeToFeed(onDelta: (delta: FeedDelta) => void): () => void
     .on("broadcast", { event: "feed_delta" }, ({ payload }) => {
       onDelta(payload as FeedDelta);
     })
+    // submit-poll broadcasts "new_poll" with { new: [poll_id] }
+    .on("broadcast", { event: "new_poll" }, ({ payload }) => {
+      onDelta(payload as FeedDelta);
+    })
     .subscribe();
 
   channels.set(name, channel);

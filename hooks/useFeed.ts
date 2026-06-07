@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { fetchFeed } from '@/lib/api';
 import type { PollWithCounts } from '@/types/database';
 
-export type FeedMode = 'trending' | 'fresh' | 'closest' | 'for_you';
+export type FeedMode = 'trending' | 'fresh' | 'closest' | 'for_you' | 'review';
 
 export interface FeedState {
   polls: PollWithCounts[];
@@ -114,5 +114,28 @@ export function useFeed() {
     }));
   }, []);
 
-  return { ...state, initialLoad, refresh, loadMore, switchMode, updatePollCounts };
+  const updatePollUpvote = useCallback((
+    pollId: string,
+    upvoteCount: number,
+    userUpvoted: boolean,
+  ) => {
+    setState(s => ({
+      ...s,
+      polls: s.polls.map(p =>
+        p.id === pollId
+          ? { ...p, upvote_count: upvoteCount, user_upvoted: userUpvoted }
+          : p,
+      ),
+    }));
+  }, []);
+
+  const prependPoll = useCallback((poll: PollWithCounts) => {
+    setState(s => {
+      // Deduplicate — don't prepend if already in list
+      if (s.polls.some(p => p.id === poll.id)) return s;
+      return { ...s, polls: [poll, ...s.polls] };
+    });
+  }, []);
+
+  return { ...state, initialLoad, refresh, loadMore, switchMode, updatePollCounts, updatePollUpvote, prependPoll };
 }

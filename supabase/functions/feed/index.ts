@@ -6,7 +6,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-type FeedMode = "trending" | "fresh" | "closest" | "for_you" | "pending";
+type FeedMode = "trending" | "fresh" | "closest" | "for_you" | "pending" | "review";
 
 interface PollRow {
   id: string;
@@ -30,6 +30,7 @@ interface PollWithCounts extends PollRow {
   velocity: number;
   user_vote: 1 | -1 | null;
   comment_count: number;
+  user_upvoted?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -69,9 +70,9 @@ Deno.serve(async (req) => {
 
     let query = supabase.from("polls").select(SELECT_COLS).limit(limit + 1);
 
-    if (mode === "pending") {
-      query = query.eq("status", "pending").order("upvote_count", { ascending: false });
-      if (cursor) query = query.lt("upvote_count", Number(atob(cursorParam!)));
+    if (mode === "pending" || mode === "review") {
+      query = query.eq("status", "pending").order("created_at", { ascending: false });
+      if (cursor) query = query.lt("created_at", atob(cursorParam!));
     } else {
       query = query
         .eq("status", "live")
@@ -96,9 +97,11 @@ Deno.serve(async (req) => {
       return json({ polls: [], cursor: null, has_more: false });
     }
 
-    // ── Batch: user votes + comment counts — parallel ─────────────────────
+    // ── Batch: user votes + comment counts + upvotes — parallel ──────────
     const userVoteMap: Record<string, 1 | -1> = {};
     const commentCountMap: Record<string, number> = {};
+    const userUpvoteSet = new Set<string>();
+    const isReviewMode = mode === "review" || mode === "pending";
 
     await Promise.all([
       supabase
@@ -124,6 +127,19 @@ Deno.serve(async (req) => {
             }
           }
         }),
+
+      isReviewMode
+        ? supabase
+          .from("poll_upvotes")
+          .select("poll_id")
+          .eq("user_id", user.id)
+          .in("poll_id", pollIds)
+          .then(({ data }) => {
+            if (data) {
+              for (const u of data) userUpvoteSet.add(u.poll_id);
+            }
+          })
+        : Promise.resolve(),
     ]);
 
     console.log(`[feed] votes+comments: ${Date.now() - start}ms`);
@@ -153,6 +169,7 @@ Deno.serve(async (req) => {
               velocity: Number(redisVelocity ?? 0),
               user_vote: userVoteMap[poll.id] ?? null,
               comment_count: commentCountMap[poll.id] ?? 0,
+              user_upvoted: userUpvoteSet.has(poll.id),
             };
           }
         } catch (redisErr) {
@@ -174,6 +191,7 @@ Deno.serve(async (req) => {
           velocity: 0,
           user_vote: userVoteMap[poll.id] ?? null,
           comment_count: commentCountMap[poll.id] ?? 0,
+          user_upvoted: userUpvoteSet.has(poll.id),
         };
       }),
     );
@@ -188,7 +206,8 @@ Deno.serve(async (req) => {
 
     const hasMore = (polls as PollRow[]).length > limit;
     const lastItem = enriched[enriched.length - 1];
-    const nextCursor = hasMore && lastItem?.promoted_at ? btoa(lastItem.promoted_at) : null;
+    const cursorField = isReviewMode ? lastItem?.created_at : lastItem?.promoted_at;
+    const nextCursor = hasMore && cursorField ? btoa(cursorField) : null;
 
     console.log(`[feed] done — ${enriched.length} polls in ${Date.now() - start}ms`);
 

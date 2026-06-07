@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import { useColors } from '@/constants/colors';
 import { useFeed } from '@/hooks/useFeed';
 import { useVote } from '@/hooks/useVote';
 import { subscribeToFeed } from '@/lib/realtime';
+import { upvotePoll, fetchSinglePoll } from '@/lib/api';
 import { FeedList } from '@/components/feed/FeedList';
 import { FeedModeTabs } from '@/components/feed/FeedModeTabs';
 import { Toast } from '@/components/shared/Toast';
@@ -40,9 +41,16 @@ export default function FeedScreen() {
   // Realtime feed:global subscription
   useEffect(() => {
     const unsub = subscribeToFeed((delta) => {
-      // When new polls appear in the feed channel, refresh to pick them up
+      // Fetch and prepend each new poll_id — no full reload needed
       if (delta.new && delta.new.length > 0) {
-        feed.refresh();
+        for (const pollId of delta.new) {
+          fetchSinglePoll(pollId)
+            .then(poll => feed.prependPoll(poll))
+            .catch(() => {
+              // Fallback: full refresh if fetch fails
+              feed.refresh();
+            });
+        }
       }
       // Update counts for any polls in the current list
       if (delta.counts) {
@@ -59,6 +67,25 @@ export default function FeedScreen() {
     if (!poll) return;
     await vote(pollId, value, poll.yes_count, poll.no_count, poll.total_count);
   }, [feed.polls, vote]);
+
+  const handleUpvote = useCallback((pollId: string) => {
+    const poll = feed.polls.find(p => p.id === pollId);
+    if (!poll) return;
+    // Optimistic: increment count, mark as upvoted
+    const newCount = (poll.upvote_count ?? 0) + 1;
+    feed.updatePollUpvote(pollId, newCount, true);
+
+    upvotePoll(pollId).then((result) => {
+      feed.updatePollUpvote(pollId, result.upvote_count, true);
+      if (result.promoted) {
+        feed.refresh();
+      }
+    }).catch(() => {
+      // Revert optimistic update
+      feed.updatePollUpvote(pollId, poll.upvote_count ?? 0, false);
+      showToast('Failed to upvote. Please try again.', 'error');
+    });
+  }, [feed.polls, feed.updatePollUpvote, feed.refresh]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -85,6 +112,7 @@ export default function FeedScreen() {
           hasMore={feed.hasMore}
           getUserVote={getUserVote}
           onVote={handleVote}
+          onUpvote={handleUpvote}
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
           onCountsUpdate={feed.updatePollCounts}

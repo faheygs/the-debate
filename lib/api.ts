@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
-import type { FeedResponse, CastVoteResponse, PollDetailResponse } from '@/types/database';
+import type { FeedResponse, CastVoteResponse, PollDetailResponse, SubmitPollResponse, UpvotePollResponse } from '@/types/database';
+import type { PollType } from '@/types/app';
 
 const BASE = process.env.EXPO_PUBLIC_SUPABASE_URL + '/functions/v1';
 
@@ -73,6 +74,18 @@ export async function fetchPoll(pollId: string): Promise<PollDetailResponse> {
   return res.json();
 }
 
+export async function fetchSinglePoll(pollId: string): Promise<import('@/types/database').PollWithCounts> {
+  const data = await fetchPoll(pollId);
+  return {
+    ...data.poll,
+    yes_count: data.yes_count,
+    no_count: data.no_count,
+    total_count: data.total_count,
+    comment_count: data.comment_count,
+    user_vote: data.user_vote,
+  };
+}
+
 export async function submitComment(
   pollId: string,
   content: string,
@@ -88,6 +101,47 @@ export async function submitComment(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).error || `submit-comment ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function submitPoll(
+  question: string,
+  pollType: PollType,
+  category: string,
+  optionA?: string,
+  optionB?: string,
+): Promise<SubmitPollResponse> {
+  const token = await getToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const body: Record<string, unknown> = { question, poll_type: pollType, category };
+  if (optionA) body.option_a = optionA;
+  if (optionB) body.option_b = optionB;
+  const res = await fetch(`${BASE}/submit-poll`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error || `submit-poll ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function upvotePoll(pollId: string): Promise<UpvotePollResponse> {
+  const token = await getToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/upvote-poll`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ poll_id: pollId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error || `upvote-poll ${res.status}`);
   }
   return res.json();
 }

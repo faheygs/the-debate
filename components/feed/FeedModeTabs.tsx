@@ -7,6 +7,7 @@ const MODES: { key: FeedMode; label: string }[] = [
   { key: 'closest', label: 'Closest' },
   { key: 'fresh', label: 'Fresh' },
   { key: 'for_you', label: 'For You' },
+  { key: 'review', label: 'In Review' },
 ];
 
 interface Props {

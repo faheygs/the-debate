@@ -16,6 +16,7 @@ interface Props {
   hasMore: boolean;
   getUserVote: (pollId: string) => 1 | -1 | null;
   onVote: (pollId: string, value: 1 | -1) => void;
+  onUpvote?: (pollId: string) => void;
   onLoadMore: () => void;
   onRefresh: () => void;
   onCountsUpdate: (pollId: string, yes: number, no: number, total: number) => void;
@@ -28,6 +29,7 @@ export function FeedList({
   hasMore,
   getUserVote,
   onVote,
+  onUpvote,
   onLoadMore,
   onRefresh,
   onCountsUpdate,
@@ -123,6 +125,7 @@ export function FeedList({
           index={index}
           userVote={getUserVote(item.id)}
           onVote={onVote}
+          onUpvote={onUpvote}
         />
       )}
       onEndReached={hasMore ? onLoadMore : undefined}

@@ -95,20 +95,22 @@ const barStyles = StyleSheet.create({
 
 // ── PollCard ──────────────────────────────────────────────────────────────────
 
+const UPVOTE_THRESHOLD = 10;
+
 interface Props {
   poll: PollWithCounts;
   index: number;
   userVote: 1 | -1 | null;
   onVote: (pollId: string, value: 1 | -1) => void;
+  onUpvote?: (pollId: string) => void;
 }
 
-export function PollCard({ poll, index, userVote, onVote }: Props) {
+export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
   const colors = useColors();
   const isDark = useColorScheme() === 'dark';
   const ctx = usePollState();
   const override = ctx.getPollState(poll.id);
 
-  // Context overrides feed data so post-vote counts reflect immediately on back navigation
   const total = override?.total_count ?? poll.total_count;
   const yes = override?.yes_count ?? poll.yes_count;
   const effectiveVote = override?.user_vote ?? userVote;
@@ -129,11 +131,90 @@ export function PollCard({ poll, index, userVote, onVote }: Props) {
 
   const yesPct = total > 0 ? (yes / total) * 100 : 50;
   const commentCount = poll.comment_count ?? 0;
+  const isPending = poll.status === 'pending';
 
   const catColors = (isDark ? CATEGORY_DARK : CATEGORY_LIGHT)[poll.category] ??
     (isDark ? CATEGORY_DARK.news : CATEGORY_LIGHT.news);
 
   const statusBadge = getStatusBadge(poll, poll.velocity);
+
+  // ── Pending (review) card ─────────────────────────────────────────────────
+
+  if (isPending) {
+    const upvoteCount = poll.upvote_count ?? 0;
+    const neededMore = Math.max(0, UPVOTE_THRESHOLD - upvoteCount);
+    const userUpvoted = poll.user_upvoted ?? false;
+
+    return (
+      <Animated.View style={{ opacity: enterOpacity, transform: [{ translateY: enterTranslate }] }}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={[styles.badge, { backgroundColor: catColors.bg }]}>
+              <Text style={[styles.badgeText, { color: catColors.text }]}>
+                {poll.category.toUpperCase()}
+              </Text>
+            </View>
+            <View style={[styles.badge, styles.badgeRow, { backgroundColor: '#FEF3C7' }]}>
+              <Ionicons name="time-outline" size={10} color="#92400E" />
+              <Text style={[styles.badgeText, { color: '#92400E' }]}>In Review</Text>
+            </View>
+          </View>
+
+          {/* Question */}
+          <Text style={[styles.question, { color: colors.text }]} numberOfLines={2} ellipsizeMode="tail">
+            {poll.question}
+          </Text>
+
+          {/* Upvote progress bar */}
+          <View style={[barStyles.track, { backgroundColor: colors.surfaceAlt }]}>
+            <View
+              style={[
+                barStyles.fill,
+                {
+                  flex: Math.max(upvoteCount, 0),
+                  backgroundColor: colors.primary,
+                },
+              ]}
+            />
+            <View style={{ flex: Math.max(UPVOTE_THRESHOLD - upvoteCount, 0) }} />
+          </View>
+
+          {/* Upvote info row + button */}
+          <View style={styles.pendingRow}>
+            <Text style={[styles.infoText, { color: colors.textTertiary }]}>
+              {neededMore > 0
+                ? `${neededMore} more ${neededMore === 1 ? 'upvote' : 'upvotes'} to go live`
+                : 'Ready to go live!'}
+            </Text>
+            <TouchableOpacity
+              style={[
+                styles.upvoteBtn,
+                {
+                  backgroundColor: userUpvoted ? colors.primary : colors.surface,
+                  borderColor: userUpvoted ? colors.primary : colors.border,
+                },
+              ]}
+              onPress={() => !userUpvoted && onUpvote?.(poll.id)}
+              disabled={userUpvoted}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name={userUpvoted ? 'thumbs-up' : 'thumbs-up-outline'}
+                size={14}
+                color={userUpvoted ? '#fff' : colors.textSecondary}
+              />
+              <Text style={[styles.upvoteBtnText, { color: userUpvoted ? '#fff' : colors.textSecondary }]}>
+                {upvoteCount}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Animated.View>
+    );
+  }
+
+  // ── Live card ─────────────────────────────────────────────────────────────
 
   return (
     <Animated.View
@@ -250,5 +331,23 @@ const styles = StyleSheet.create({
   infoText: {
     fontFamily: 'DMSans_400Regular',
     fontSize: 11,
+  },
+  pendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  upvoteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  upvoteBtnText: {
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 13,
   },
 });
