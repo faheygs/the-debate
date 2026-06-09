@@ -5,7 +5,6 @@ import { pluralize } from '@/lib/utils';
 import type { PollWithCounts } from '@/types/database';
 
 const AMBER = '#C8762A';
-const SLATE = '#2A3440'; // bar disagree side
 
 interface Top10CardProps {
   poll: PollWithCounts;
@@ -20,9 +19,6 @@ export function Top10Card({ poll, rank }: Top10CardProps) {
   const cardBorder = isDark ? '#252525' : colors.border;
 
   const isEmpty = poll.total_count === 0;
-  const agreePct = !isEmpty
-    ? Math.round((poll.yes_count / poll.total_count) * 100)
-    : 50;
 
   return (
     <TouchableOpacity
@@ -30,12 +26,8 @@ export function Top10Card({ poll, rank }: Top10CardProps) {
       onPress={() => router.push(`/poll/${poll.id}` as never)}
       activeOpacity={0.85}
     >
-      {/* Rank badge */}
-      <Text style={[styles.rank, { color: AMBER }]}>
-        {rank}
-      </Text>
+      <Text style={[styles.rank, { color: AMBER }]}>{rank}</Text>
 
-      {/* Content */}
       <View style={styles.content}>
         <Text style={[styles.category, { color: colors.textTertiary }]}>
           {poll.category.toUpperCase()}
@@ -45,28 +37,15 @@ export function Top10Card({ poll, rank }: Top10CardProps) {
           {poll.question}
         </Text>
 
-        {/* Split bar */}
         {isEmpty ? (
-          <View style={[styles.bar, { backgroundColor: isDark ? '#2A2A2A' : colors.border }]} />
+          <Text style={[styles.firstVote, { color: colors.textTertiary }]}>
+            Be the first to vote
+          </Text>
         ) : (
-          <View style={styles.bar}>
-            <View style={[styles.barAgree, { flex: agreePct || 0.01 }]} />
-            <View style={[styles.barDisagree, { flex: (100 - agreePct) || 0.01 }]} />
-          </View>
+          <Text style={[styles.voteCount, { color: AMBER }]}>
+            {pluralize(poll.total_count, 'vote')}
+          </Text>
         )}
-
-        {/* Bottom row */}
-        <View style={styles.bottomRow}>
-          {isEmpty ? (
-            <Text style={[styles.firstVote, { color: colors.textTertiary }]}>
-              Be the first to vote
-            </Text>
-          ) : (
-            <Text style={[styles.voteCount, { color: AMBER }]}>
-              {pluralize(poll.total_count, 'vote')}
-            </Text>
-          )}
-        </View>
       </View>
     </TouchableOpacity>
   );
@@ -104,24 +83,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     letterSpacing: -0.2,
     marginBottom: 12,
-  },
-  bar: {
-    flexDirection: 'row',
-    height: 5,
-    borderRadius: 99,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  barAgree: {
-    backgroundColor: AMBER,
-  },
-  barDisagree: {
-    backgroundColor: SLATE,
-  },
-  bottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
   voteCount: {
     fontFamily: 'Inter_500Medium',

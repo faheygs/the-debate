@@ -13,7 +13,7 @@ import {
   FlatList,
   useColorScheme,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/constants/colors';
 import { submitPoll } from '@/lib/api';
@@ -57,7 +57,6 @@ function normalizeTag(raw: string): string {
 export default function SubmitScreen() {
   const colors = useColors();
   const isDark = useColorScheme() === 'dark';
-  const insets = useSafeAreaInsets();
 
   const [question, setQuestion] = useState('');
   const [category, setCategory] = useState<CategoryKey | null>(null);
@@ -177,6 +176,7 @@ export default function SubmitScreen() {
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            contentInsetAdjustmentBehavior="automatic"
           >
             {/* Header */}
             <View>
@@ -409,10 +409,8 @@ export default function SubmitScreen() {
 
               <Text style={styles.tagHint}>Press space or comma to add · tap to remove</Text>
             </View>
-          </ScrollView>
 
-          {/* Fixed submit button */}
-          <View style={[styles.footer, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 16) }]}>
+            {/* Submit button */}
             <TouchableOpacity
               style={[styles.submitBtn, { backgroundColor: canSubmit ? AMBER : '#1E1E1E' }]}
               onPress={handleSubmit}
@@ -423,11 +421,11 @@ export default function SubmitScreen() {
                 <ActivityIndicator color={AMBER_TEXT} size="small" />
               ) : (
                 <Text style={[styles.submitBtnText, { color: canSubmit ? AMBER_TEXT : '#444444' }]}>
-                  Start the Debate
+                  Submit
                 </Text>
               )}
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
 
@@ -439,7 +437,7 @@ export default function SubmitScreen() {
         onRequestClose={() => setPickerOpen(false)}
       >
         <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setPickerOpen(false)} />
-        <View style={[styles.modalSheet, { backgroundColor: isDark ? '#111111' : colors.background, paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={[styles.modalSheet, { backgroundColor: isDark ? '#111111' : colors.background, paddingBottom: 16 }]}>
           <View style={[styles.sheetHandle, { backgroundColor: isDark ? '#333333' : colors.border }]} />
           <FlatList
             data={CATEGORIES}
@@ -483,7 +481,7 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: {
     padding: 16,
-    paddingBottom: 100,
+    paddingBottom: 32,
     gap: 24,
   },
 
@@ -719,11 +717,6 @@ const styles = StyleSheet.create({
     color: '#444444',
   },
 
-  // Footer
-  footer: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-  },
   submitBtn: {
     height: 52,
     borderRadius: 12,
