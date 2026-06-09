@@ -360,43 +360,51 @@ SELECT cron.schedule('closing-soon', '*/15 * * * *',
 
 ### Tab screens
 
-- `app/(tabs)/index.tsx` — Feed placeholder (Phase 4)
-- `app/(tabs)/search.tsx` — Full Explore screen v2: 3 modes (explore/search/category), new sections (Top10/Region/BlowingUp/Universal/Divided/TopicGrid), unvoted-only discovery, Top10Card/BlowingUpRow/ConsensusCard components, per-category accent tiles
-- `app/(tabs)/submit.tsx` — full form: question, poll type, versus inputs, category
-- `app/(tabs)/board.tsx` — Personal Board placeholder + temporary Sign Out
+- `app/(tabs)/index.tsx` — Feed screen: filter state, FeedList, mode tabs, Realtime feed:global subscription
+- `app/(tabs)/search.tsx` — Full Explore screen v2: 3 modes (explore/search/category), 6 sections (Top 10 Global/Regional/Blowing Up/Universal/Divided/Topic Grid), unvoted-only discovery, Top10Card/BlowingUpRow/ConsensusCard components, per-category accent tiles, closing-soon section
+- `app/(tabs)/submit.tsx` — Submit screen v2: live preview card (real-time, "LIVE PREVIEW" label), question input (focus border + char counter), preset vote-label picker (Agree/Disagree · Yes/No · True/False · Support/Oppose · For/Against · Custom), category modal, tags, "Start the Debate" button. poll_type derived from labels.
+- `app/(tabs)/board.tsx` — Personal Board: usePersonalBoard hook, worldview summary, stat grid, voting history, pull-to-refresh, sign out text link
 
 ### Edge Functions (Deno, npm: imports)
 
-- `supabase/functions/cast-vote/index.ts` — full vote pipeline per SPEC §4
-- `supabase/functions/feed/index.ts` — paginated feed, 5 modes (trending/closest/fresh/for_you/review), Redis+PG counts, user_upvoted for review mode
-- `supabase/functions/poll/index.ts` — poll detail, demographics, comments with attribution, has_commented, user_comment, user_demographics
-- `supabase/functions/submit-comment/index.ts` — JWT auth, ban check, duplicate check, Claude moderation (claude-sonnet-4-20250514), INSERT, Realtime broadcast
-- `supabase/functions/flag-comment/index.ts` — INSERT flag, count flags, auto-block at 3 flags
-- `supabase/functions/submit-poll/index.ts` — JWT auth, validation, INSERT polls status='live' (auto-approved), promoted_at+expires_at set, Redis ZADD feed:trending, Realtime broadcast feed:global
+- `supabase/functions/cast-vote/index.ts` — full vote pipeline per SPEC §4; expires_at enforcement (409 if closed); Redis ops in single Promise.all; DB writes fire-and-forget; fires trending notification at 10k votes
+- `supabase/functions/feed/index.ts` — paginated feed; filter modes: all/for_you/timed/category; `?category=` and `?timed=true` params; Redis+PG counts with write-back warmup; comment_count batch; JWT cache (shared auth helper); timing logs
+- `supabase/functions/poll/index.ts` — poll detail, demographics, full_breakdown, comments ordered by net_score DESC; opinion_votes embedded; has_commented, user_comment, user_demographics; 10-way parallel Promise.all
+- `supabase/functions/submit-comment/index.ts` — JWT auth, ban check, duplicate check, Claude moderation (claude-sonnet-4-20250514), INSERT approved-only, Realtime broadcast fire-and-forget
+- `supabase/functions/flag-comment/index.ts` — INSERT flag, count flags, auto-block at 3 flags, comment_ban escalation at 3 blocked comments
+- `supabase/functions/submit-poll/index.ts` — JWT auth, validation, INSERT polls status='live' (auto-approved), promoted_at+expires_at set, Redis ZADD feed:trending score=10, Realtime broadcast feed:global; fires "Poll live" push notification to submitter
 - `supabase/functions/upvote-poll/index.ts` — INSERT poll_upvotes, count-based promotion at 10 upvotes, Realtime broadcast on promotion
-- `supabase/functions/personal-board/index.ts` — JWT auth, parallel fetch (votes JOIN polls + user_insights), single vote_counts batch query, computes contrarian_score/top_category/actual_lean server-side; returns vote_history + stats + insights + vote_count_at_generation
-- `supabase/functions/generate-insights/index.ts` — JWT auth, parallel fetch (votes + profile), vote_counts batch for yes_pct, calls Claude claude-sonnet-4-20250514 with SPEC §6.2 prompt, UPSERT user_insights; returns { generated, insights }
-- `supabase/functions/background-sync/index.ts` — Redis→PG sync, vote queue drain (inactive)
+- `supabase/functions/personal-board/index.ts` — JWT auth, parallel fetch (votes JOIN polls + user_insights), single vote_counts batch, computes contrarian_score/top_category/actual_lean; returns vote_history + stats + insights + vote_count_at_generation
+- `supabase/functions/generate-insights/index.ts` — JWT auth, Claude claude-sonnet-4-20250514 with SPEC §6.2 prompt, UPSERT user_insights; fires "Insight ready" push notification to user
+- `supabase/functions/search/index.ts` — GET; optional auth; explore mode (?explore=top10_global/top10_region/blowing_up/universal/divided); keyword FTS + ILIKE parallel merge; ?sort=closing; ?category= filter; shared enrichPolls() with Redis pipeline + write-back
+- `supabase/functions/vote-opinion/index.ts` — JWT auth; three-state logic: no vote→INSERT, same→DELETE (toggle off), different→UPDATE; returns { success, net_score, up_count, down_count, user_vote }
+- `supabase/functions/send-notification/index.ts` — internal service-role endpoint; accepts single token or tokens[]; sends to Expo Push API in batches of 100
+- `supabase/functions/daily-nudge/index.ts` — scheduled cron (hourly); sends "3 trending debates you haven't weighed in on" to all users with push tokens
+- `supabase/functions/closing-soon/index.ts` — scheduled cron (every 15min); finds polls expiring in 1–2hrs, notifies unvoted users
+- `supabase/functions/warm-redis/index.ts` — one-time utility; bulk-writes all vote_counts rows to Redis in 300-poll pipeline batches; call after seeding or Redis flush
+- `supabase/functions/background-sync/index.ts` — Redis→PG sync (inactive, superseded by synchronous PG writes in cast-vote)
 
 ### Components
 
 - `components/onboarding/ProgressBar.tsx`, `OptionGrid.tsx`, `PoliticsSlider.tsx`
-- `components/poll/VoteButtons.tsx` — binary + versus types, locked post-vote
-- `components/poll/PollCard.tsx` — minimal card (kept for Phase 5 reuse)
-- `components/feed/PollCard.tsx` — full feed card: category/status badges, animated vote bar, enter animation, optimistic vote; context override layer for post-vote count sync; info row "votes · voices"; zero-vote gray bar + "Be the first to vote"; card tap → `/poll/[id]`
-- `components/poll/DemographicBreakdown.tsx` — fade-in after vote, 4 rows (age/region/politics/gender), mini 4px vote bars, "not enough data" guard (min 5 votes)
-- `components/poll/CommentSection.tsx` — "Voices" heading, comment cards with attribution (age_range · region_detail · political lean label), flag button with auto-hide at 3 flags
-- `components/poll/CommentInput.tsx` — keyboard-aware bottom input, 150-char limit with counter, optimistic submit, moderation error feedback; locked view shows existing comment with indigo left border
-- `components/feed/FeedList.tsx` — FlatList wrapper, viewport tracking, per-poll Realtime subs (max 5)
-- `components/feed/FeedModeTabs.tsx` — scrollable mode pill tabs
+- `components/poll/VoteButtons.tsx` — binary + versus types, locked post-vote; voted-away button dims at 40% opacity
+- `components/poll/VoteBar.tsx` — 44px diagonal SVG split bar; amber = your side, slate = other; spring animation from 50% on first vote; optional agreeCount/disagreeCount/totalCount props for "X of Y" count display inside bar
+- `components/feed/PollCard.tsx` — full feed card: category/status badges, diagonal VoteBar, enter animation, optimistic vote; PollStateContext override for count sync; info row "votes · opinions"; zero-vote neutral bar + "Be the first to vote"; chevron affordance; card tap → `/poll/[id]`
+- `components/poll/CommentSection.tsx` — "Opinions" heading + count, thumbs-up/down pill voting per opinion, opinion cards with attribution (age · region), subtle amber top-line accent; section hidden before user votes
+- `components/poll/CommentInput.tsx` — flat surfaceAlt bar, 150-char counter ("X/150"), placeholder "Share your opinion...", Post button Inter 600; hidden before user votes
+- `components/feed/FeedList.tsx` — FlatList wrapper, viewport tracking, per-poll Realtime subs (max 5), error/empty EmptyState, load-more error inline footer
+- `components/feed/FeedModeTabs.tsx` — single scrollable filter row: All · For You · Timed · 11 categories · In Review
 - `components/feed/PollCardSkeleton.tsx` — shimmer skeleton (opacity loop 0.4→0.8→0.4)
+- `components/feed/PollCardCompact.tsx` — horizontal scroll card; 3px colored left border post-vote; animated vote bar; showTimeRemaining prop (rose <1h, amber <24h, tertiary <7d)
 - `components/shared/Toast.tsx` — slide-up toast, auto-dismiss 3s, success/error/info variants
-- `components/shared/EmptyState.tsx` — icon + heading + subtext
-- `components/board/WorldviewSummary.tsx` — card with 3px indigo left border, italic AI summary, "Generated from X votes" in indigo, shimmer loading state, placeholder for <5 votes
-- `components/board/StatCards.tsx` — 2×2 grid: Total Votes / Contrarian Score / Top Category / Your Lean; Syne 700 22px values, contrarian in indigo if >50%
-- `components/board/VotingHistory.tsx` — chronological vote history, "Agreed"/"Disagreed" in emerald/rose, versus polls show option label, global result %, majority/minority label, category badge, tappable to /poll/[id]
+- `components/shared/EmptyState.tsx` — icon + heading + subtext + optional CTA button
+- `components/explore/Top10Card.tsx` — 240px card, large amber rank number left, question + bar + vote count right; empty state: "Be the first to vote" italic
+- `components/explore/BlowingUpRow.tsx` — full-width row, amber flame icon box, question + velocity text; left-edge amber border; "+N votes this hour" or "Gaining momentum"
+- `components/explore/ConsensusCard.tsx` — 180px card, big % number (amber = universal, slate = divided), label, question
+- `components/board/WorldviewSummary.tsx` — card with amber left border, italic AI summary, "Generated from X votes", shimmer loading state, placeholder for <5 votes
+- `components/board/StatCards.tsx` — 2×2 grid: Total Votes / Contrarian Score / Top Category / Your Lean; Inter 600 22px values
+- `components/board/VotingHistory.tsx` — chronological vote history, vote label in amber/slate, versus polls show option label, global result %, majority/minority, category badge, tappable; empty state with "Explore Debates" button
 - `components/shared/VoteCount.tsx` — formatted count with scale-pulse animation; re-exports formatVoteCount from lib/utils
-- `components/feed/PollCardCompact.tsx` — 280×160px horizontal scroll card; showTimeRemaining prop renders time-left indicator (rose <1h, amber <24h, text-tertiary <7d)
 
 ### Libraries / Hooks
 
@@ -410,7 +418,7 @@ SELECT cron.schedule('closing-soon', '*/15 * * * *',
 - `hooks/usePersonalBoard.ts` — `useQuery(['board', userId])` wrapping `fetchPersonalBoard`. Returns: data, loading, refreshing, error, refetch.
 - `lib/supabase.ts` — Supabase client
 - `lib/redis.ts` — Upstash Redis client
-- `lib/api.ts` — fetchFeed, castVote, fetchPoll, fetchSinglePoll, submitComment, flagComment, submitPoll, upvotePoll, fetchPersonalBoard, generateInsights, fetchSearch(q, category, cursor, limit, sort) — all auto-attach JWT
+- `lib/api.ts` — fetchFeed, castVote, fetchPoll, fetchSinglePoll, submitComment, flagComment, submitPoll, upvotePoll, fetchPersonalBoard, generateInsights, fetchSearch(q, category, cursor, limit, sort), fetchExplore(mode), voteOnOpinion(commentId, value) — all auto-attach JWT
 - `lib/utils.ts` — formatVoteCount(n), formatTimeRemaining(expiresAt) → "Closes in Xm/h/d" or null, formatAttribution(ageRange, regionDetail, politicalLean), generateInsight(yesPct, total, userVote), pluralize(n, word), STATE_NAMES map, getStateName(code)
 - `lib/realtime.ts` — subscribeToFeed, subscribeToPoll, subscribeToPollComments, subscribeToUserPrivate, unsubscribeAll; CommentBroadcast now includes age_range, region_detail, political_lean
 - `constants/colors.ts` — full DESIGN.md token system + useColors() hook
@@ -421,7 +429,17 @@ SELECT cron.schedule('closing-soon', '*/15 * * * *',
 
 ### Database
 
-- Migrations 001–005 (005 = API permissions + pg_cron instructions)
+- Migrations 001–014
+  - 001–005: schema, permissions, pg_cron
+  - 006: users.has_seen_tour flag
+  - 007: comment_flags indexes
+  - 008: performance indexes (feed/poll/vote query patterns)
+  - 009: submit_poll permissions + upvote indexes
+  - 010: personal_board permissions (user_insights grants + vote index)
+  - 011: GIN search index on polls.question (FTS)
+  - 012: poll_tags table, indexes, grants
+  - 013: opinion_votes table + comments.net_score column
+  - 014: users.expo_push_token + sparse index
 - Seed: `supabase/seed/seed_polls.sql` — 50 polls, all live, 30-day expiry for non-evergreen, NULL expiry for evergreen hypotheticals
 
 ---
@@ -519,12 +537,12 @@ Steps 5 and 6 run in parallel via Promise.allSettled — failures are logged but
 
 ### Design system
 
-- Accent: Amber `#C8762A` — used only on user-interacted elements (voted state, active buttons, accents)
-- No green (`#10B981`), no rose (`#F43F5E`), no indigo (`#6366F1`) anywhere in the codebase
+- Accent: Amber `#C8762A` — primarily for voted state, active buttons, CTAs. Intentional exceptions in explore components: rank numbers (Top10Card), velocity text (BlowingUpRow). These are deliberate design decisions, not violations.
+- No green (`#10B981`), no rose (`#F43F5E`), no indigo (`#6366F1`) anywhere in the codebase (rose #E57373 used only for downvote active state and char counter overflow)
 - All category badges are neutral (`surfaceAlt` + `border`) — no per-category colors
-- Vote bars are amber-only after voting, neutral border before voting
-- Full token system in `constants/colors.ts` via `useColors()` hook — zero hardcoded hex values
-- Tokens: `accent`, `accentText`, `accentDark`, `background`, `surface`, `surfaceAlt`, `border`, `borderMid`, `text`, `textSecondary`, `textTertiary`, `textDimmed`
+- Vote bars are amber-only after voting, neutral border before voting (diagonal SVG split, slate-blue = other side)
+- Token system in `constants/colors.ts` via `useColors()` hook. Components that need dark-mode-specific values (e.g., `#161616` card bg in explore) may use `isDark` ternaries with hardcoded hex inline — acceptable when the token system doesn't have a precise dark-only equivalent.
+- Tokens: `accent`, `accentText`, `accentDark`, `background`, `surface`, `surfaceAlt`, `border`, `borderMid`, `text`, `textSecondary`, `textTertiary`, `textDimmed`, `slateVote`, `slateVoteBorder`, `slateVoteText`
 
 ### Vote persistence
 
