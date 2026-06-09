@@ -133,9 +133,26 @@ export interface VoteHistoryItem {
 
 export interface BoardStats {
   total_votes: number;
+  total_comments: number;
+  total_opinion_votes: number;
   contrarian_score: number; // 0–100 percentage, one decimal
   top_category: string | null;
+  top_category_pct: number; // 0–100
   actual_lean: number | null; // -2 to +2
+  majority_pct: number; // 0–100
+  minority_pct: number; // 0–100
+  agree_pct: number; // 0–100
+  days_active: number;
+}
+
+export interface UserProfile {
+  age_range: string | null;
+  gender: string | null;
+  region_detail: string | null;
+  political_lean: number | null;
+  income_bracket: string | null;
+  education_level: string | null;
+  created_at: string;
 }
 
 export interface PersonalBoardResponse {
@@ -143,6 +160,7 @@ export interface PersonalBoardResponse {
   stats: BoardStats;
   insights: DbUserInsight | null;
   vote_count_at_generation: number;
+  user_profile: UserProfile | null;
 }
 
 export interface GenerateInsightsResponse {

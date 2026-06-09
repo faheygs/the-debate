@@ -363,7 +363,10 @@ SELECT cron.schedule('closing-soon', '*/15 * * * *',
 - `app/(tabs)/index.tsx` — Feed screen: filter state, FeedList, mode tabs, Realtime feed:global subscription
 - `app/(tabs)/search.tsx` — Full Explore screen v2: 3 modes (explore/search/category), 6 sections (Top 10 Global/Regional/Blowing Up/Universal/Divided/Topic Grid), unvoted-only discovery, Top10Card/BlowingUpRow/ConsensusCard components, per-category accent tiles, closing-soon section
 - `app/(tabs)/submit.tsx` — Submit screen v2: live preview card (real-time, "LIVE PREVIEW" label), question input (focus border + char counter), preset vote-label picker (Agree/Disagree · Yes/No · True/False · Support/Oppose · For/Against · Custom), category modal, tags, "Start the Debate" button. poll_type derived from labels.
-- `app/(tabs)/board.tsx` — Personal Board: usePersonalBoard hook, worldview summary, stat grid, voting history, pull-to-refresh, sign out text link
+- `app/(tabs)/board.tsx` — Personal Board v2: header + settings button; Anonymous profile card with member-since + demographic chips; 2×2 engagement grid (debates/opinions/opinion votes/streak); "HOW YOU VOTE" section (contrarian ring, actual lean, top category bar, 3 tendency cards); voting history button; sign out text link
+- `app/board/_layout.tsx` — Stack layout for board sub-screens (headerShown: false)
+- `app/board/settings.tsx` — demographic settings: fetches users table, pickers for all 6 fields (region has search), saves + invalidates board cache
+- `app/board/history.tsx` — voting history: filter pills (All + 9 categories), FlatList of vote items with mini VoteBar, vote label, majority/minority, tappable to poll detail
 
 ### Edge Functions (Deno, npm: imports)
 
@@ -569,6 +572,23 @@ Steps 5 and 6 run in parallel via Promise.allSettled — failures are logged but
 ---
 
 ## Session Log
+
+### Session 44 — Board Overhaul + Settings + Voting History
+
+**Files modified:**
+- `supabase/functions/personal-board/index.ts` — added `total_comments`, `total_opinion_votes`, `user_profile` to parallel Promise.all; computed `majority_pct`, `minority_pct`, `agree_pct`, `days_active`, `top_category_pct` from vote_history; all new fields in response
+- `types/database.ts` — expanded `BoardStats` with `total_comments`, `total_opinion_votes`, `majority_pct`, `minority_pct`, `agree_pct`, `days_active`, `top_category_pct`; added `UserProfile` interface; added `user_profile` to `PersonalBoardResponse`
+- `app/(tabs)/board.tsx` — full redesign: header + settings button; Anonymous profile card with neutral demographic chips (all `#1E1E1E`/`#888` — no amber on chips); 2×2 engagement grid (debates/opinions/opinion votes given/day streak); "HOW YOU VOTE" section (contrarian score with SVG ring, actual lean row, top category with horizontal bar, 3 tendency cards); voting history button → `/board/history`; sign out text link
+- `app/board/_layout.tsx` (NEW) — Stack with `headerShown: false` for board sub-screens
+- `app/board/settings.tsx` (NEW) — demographic settings form; per-field pickers via Modal+FlatList (region has search input); saves to users table; invalidates `['board', userId]` cache; amber Save Changes button
+- `app/board/history.tsx` (NEW) — voting history screen; fixed bar chart filter (horizontal scroll, 10 columns, bar height = `pct/100 × 44px` so height directly matches percentage, percentage label above bar, short label below); FlatList of vote items (question, mini VoteBar height=20, vote label, majority/minority, vote count, category badge); tappable → `/poll/[id]`
+
+**Design decisions:**
+- All demographic chips on profile card are neutral grey — amber only appears in the "HOW YOU VOTE" data section, not on identity chips
+- Category filter bars use `pct/100 × BAR_MAX_H` for height so bar height directly mirrors the displayed percentage
+- Bar strip is a fixed `View` (not a ScrollView) so it never moves as the list scrolls
+
+**Deploy:** `supabase functions deploy personal-board`
 
 ### Session 40 — Phase 12: Push Notifications
 

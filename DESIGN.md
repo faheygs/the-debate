@@ -457,25 +457,85 @@ Progress bar:
 ### Personal Board
 
 ```
-Worldview card:
-  border-left: 3px solid colors.accent
-  border-radius: 0 12px 12px 0
-  background: colors.surface
-  padding: 14px
-  border: 1px solid colors.border (except left which is accent)
+Header row:
+  "Your Board" Inter 24px 600 #F5F5F5 letterSpacing -0.4
+  "No name. Just your opinions." Inter 13px #555
+  Settings button top-right: #1A1A1A bg, #2A2A2A border, 99px radius,
+    padding 6 12, Inter 12px 500 #888, settings-outline icon 14px
 
-Stat boxes:
-  background: colors.surfaceAlt
-  border-radius: 10px
-  padding: 12px
-  Value: Inter 22px 600 colors.text
-  Label: Inter 10px 400 colors.textTertiary
+Profile card:
+  background: #161616, border-radius: 16px, border: #252525
+  padding: 16px, marginHorizontal: 16, marginBottom: 28
+  "Anonymous" Inter 16px 600 #F5F5F5
+  "Member since [Month Year]" Inter 11px #555
+  Demographic chips (age, state, political lean, gender, education):
+    ALL chips identical neutral style — no amber on any chip
+    background: #1E1E1E, border: #2A2A2A, radius: 99px
+    padding: 5 10, Inter 11px 500 #888
+    Political lean gets NO special color — same neutral as all others
 
-Voting history item:
-  Your vote "Agreed": colors.accent Inter 12px 500
-  Your vote "Disagreed": colors.textSecondary Inter 12px 500
-  (Only your agree gets amber — disagreed is neutral)
-  Global result: colors.textTertiary Inter 11px
+Engagement section (label "ENGAGEMENT" Inter 11px 500 #555 uppercase):
+  2×2 grid, gap 8px, each card: #161616 bg, #252525 border, radius 14, padding 14
+  Values: Inter 26px 600; Labels: Inter 11px #555
+  total_opinion_votes value: #C8762A (amber — active engagement metric)
+  All other values: #F5F5F5
+
+"HOW YOU VOTE" section:
+  Contrarian score row: ring indicator (SVG Circle, r=20, amber stroke,
+    stroke-dasharray for fill, rotate -90deg), Inter 13px 600 amber center text
+    Description: >60% "minority more than most", 40-60% "close to average", <40% "vote with crowd"
+  Actual lean row: lean label Inter 15px 600, sub "Based on how you vote..." only if lean differs
+  Top category row: horizontal amber bar 80px wide (6px height), pct sub-label
+  Tendency cards (3-col): majority% amber, minority% #6B8299, agree% amber
+    Inter 22px 600 values, Inter 10px #555 labels
+
+Voting History button:
+  marginHorizontal 16, marginBottom 28
+  #161616 bg, #252525 border, radius 14, padding 16
+  "Voting History" Inter 15px 600 #F5F5F5 + count sub Inter 12px #555
+  chevron in 32×32 #1E1E1E/#2A2A2A circle
+
+Sign out: Inter 12px #444, centered text link
+```
+
+### Voting History Screen
+
+```
+Header: back chevron + "Voting History" Inter 16px 600 + "{n} debates" sub
+
+Category bar chart (fixed strip, never scrolls with list):
+  Horizontal ScrollView of 10 columns (All + 9 categories)
+  Each column: 44px wide, alignItems center
+  Bar: 28px wide, borderRadius 4, height = (pct/100) × 44px floored at 3px
+    Active: amber (#C8762A)
+    Has data, inactive: #2A2A2A
+    No data: #1C1C1C (near-invisible stub)
+  Percentage label above bar: Inter 9px 500, amber when active, #444 inactive
+  Short label below: Inter 9px 500 ("All", "Pol", "Cult", "Food", "Eth",
+    "Sport", "Tech", "Rel", "Hyp", "Other")
+
+Vote history items: #161616 bg, #252525 border, radius 12, padding 12/14
+  Question: Inter 14px 500 #F5F5F5, 2 lines max
+  VoteBar: height 20
+  Bottom row: vote label (amber if agreed/versus, #888 if disagreed) +
+    "· majority/minority" #555 + vote count #555 + neutral category badge
+```
+
+### Settings Screen (board/settings)
+
+```
+Header: back chevron + "Settings" Inter 16px 600
+
+Form rows: #161616 bg, #252525 border, radius 12, padding 14/16
+  Label: Inter 14px 500 #F5F5F5
+  Value: Inter 14px #888
+  chevron-forward-outline #444
+
+Pickers: Modal sheet, #111111 bg, 20px top radius, #1A1A1A dividers
+  Active row: amber checkmark + amber text
+  Region picker has search TextInput
+
+Save button: amber filled, 52px, radius 12, Inter 15px 600 #FFF8F0 "Save Changes"
 ```
 
 ### Submit Screen
@@ -757,12 +817,13 @@ Form flows with 16px gaps between fields
 ### Personal Board
 
 ```
-Header: "Your Board" Inter 22px 600
-Subtitle: "No name. Just your opinions." textTertiary 13px
-Worldview card: amber left border accent
-Stats grid: 2x2
-Voting history: flat list
-Sign out: Inter 12px textTertiary text link at very bottom
+Header: "Your Board" Inter 24px 600 + settings button top-right
+Profile card: Anonymous label, member since, neutral demographic chips
+Engagement grid: 2×2 stat cards
+"HOW YOU VOTE" section: contrarian ring, actual lean, top category bar, 3 tendency cards
+Voting History tappable row → /board/history
+Sign out: Inter 12px #444 text link, bottom center
+Sub-screens: /board/settings (demographics form), /board/history (bar chart + list)
 ```
 
 ---

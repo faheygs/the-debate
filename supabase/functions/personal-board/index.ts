@@ -29,8 +29,8 @@ Deno.serve(async (req) => {
     if (!authResult) return json({ error: "Unauthorized" }, 401);
     const userId = authResult.userId;
 
-    // ── Parallel: vote history + insights ────────────────────────────────
-    const [voteResult, insightsResult] = await Promise.all([
+    // ── Parallel: vote history + insights + comment/opinion counts + profile ─
+    const [voteResult, insightsResult, commentsResult, opinionVotesResult, profileResult] = await Promise.all([
       supabase
         .from("votes")
         .select(`
@@ -53,6 +53,20 @@ Deno.serve(async (req) => {
         .select("*")
         .eq("user_id", userId)
         .maybeSingle(),
+      supabase
+        .from("comments")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("ai_decision", "approved"),
+      supabase
+        .from("opinion_votes")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId),
+      supabase
+        .from("users")
+        .select("age_range, gender, region_detail, political_lean, income_bracket, education_level, created_at")
+        .eq("id", userId)
+        .maybeSingle(),
     ]);
 
     const voteRows = (voteResult.data ?? []) as Array<{
@@ -69,6 +83,9 @@ Deno.serve(async (req) => {
     }>;
 
     const insights = insightsResult.data ?? null;
+    const total_comments = commentsResult.count ?? 0;
+    const total_opinion_votes = opinionVotesResult.count ?? 0;
+    const user_profile = profileResult.data ?? null;
     const pollIds = voteRows.map(v => v.poll_id).filter(Boolean);
 
     // ── Fetch vote counts for all polls at once ───────────────────────────
@@ -113,22 +130,38 @@ Deno.serve(async (req) => {
     const total_votes = vote_history.length;
 
     let contrarianCount = 0;
+    let majorityCount = 0;
+    let agreeCount = 0;
     const categoryCounts: Record<string, number> = {};
+    const activeDates = new Set<string>();
 
     for (const v of vote_history) {
       const total = v.total_count;
       if (total > 0) {
-        const yes_pct = v.yes_count / total;
-        const no_pct = v.no_count / total;
-        if (v.value === 1 && yes_pct < 0.5) contrarianCount++;
-        if (v.value === -1 && no_pct < 0.5) contrarianCount++;
+        const votedWithMajority =
+          (v.yes_count > v.no_count && v.value === 1) ||
+          (v.no_count > v.yes_count && v.value === -1);
+        if (votedWithMajority) majorityCount++;
+        else contrarianCount++;
       }
+      if (v.value === 1) agreeCount++;
       categoryCounts[v.category] = (categoryCounts[v.category] ?? 0) + 1;
+      activeDates.add(v.voted_at.substring(0, 10));
     }
 
     const contrarian_score = total_votes > 0
       ? Math.round((contrarianCount / total_votes) * 1000) / 10
       : 0;
+    const majority_pct = total_votes > 0
+      ? Math.round((majorityCount / total_votes) * 100)
+      : 0;
+    const minority_pct = total_votes > 0
+      ? Math.round((contrarianCount / total_votes) * 100)
+      : 0;
+    const agree_pct = total_votes > 0
+      ? Math.round((agreeCount / total_votes) * 100)
+      : 0;
+    const days_active = activeDates.size;
 
     let top_category: string | null = null;
     let topCount = 0;
@@ -138,6 +171,9 @@ Deno.serve(async (req) => {
         top_category = cat;
       }
     }
+    const top_category_pct = total_votes > 0 && topCount > 0
+      ? Math.round((topCount / total_votes) * 100)
+      : 0;
 
     const actual_lean = insights?.political_actual ?? null;
 
@@ -147,12 +183,20 @@ Deno.serve(async (req) => {
       vote_history,
       stats: {
         total_votes,
+        total_comments,
+        total_opinion_votes,
         contrarian_score,
         top_category,
+        top_category_pct,
         actual_lean,
+        majority_pct,
+        minority_pct,
+        agree_pct,
+        days_active,
       },
       insights,
       vote_count_at_generation: insights?.vote_count_at_generation ?? 0,
+      user_profile,
     });
   } catch (err) {
     console.error("[personal-board]", err);
