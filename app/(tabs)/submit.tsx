@@ -11,81 +11,147 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
+  useColorScheme,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/constants/colors';
 import { submitPoll } from '@/lib/api';
 import { Toast } from '@/components/shared/Toast';
-import type { PollType } from '@/types/app';
 
 const CATEGORIES = [
-  { key: 'politics',      label: 'Politics',      color: '#4338CA' },
-  { key: 'culture',       label: 'Culture',       color: '#7C3AED' },
-  { key: 'food',          label: 'Food',          color: '#991B1B' },
-  { key: 'ethics',        label: 'Ethics',        color: '#92400E' },
-  { key: 'sports',        label: 'Sports',        color: '#166534' },
-  { key: 'tech',          label: 'Tech',          color: '#1D4ED8' },
-  { key: 'relationships', label: 'Relationships', color: '#9D174D' },
-  { key: 'hypothetical',  label: 'Hypothetical',  color: '#0F766E' },
-  { key: 'news',          label: 'News',          color: '#374151' },
-  { key: 'entertainment', label: 'Entertainment', color: '#9A3412' },
-  { key: 'other',         label: 'Other',         color: '#6B7280' },
+  { key: 'politics',      label: 'Politics' },
+  { key: 'culture',       label: 'Culture' },
+  { key: 'food',          label: 'Food' },
+  { key: 'ethics',        label: 'Ethics' },
+  { key: 'sports',        label: 'Sports' },
+  { key: 'tech',          label: 'Tech' },
+  { key: 'relationships', label: 'Relationships' },
+  { key: 'hypothetical',  label: 'Hypothetical' },
+  { key: 'news',          label: 'News' },
+  { key: 'entertainment', label: 'Entertainment' },
+  { key: 'other',         label: 'Other' },
 ] as const;
 
 type CategoryKey = typeof CATEGORIES[number]['key'];
 
-const POLL_TYPES: { value: Extract<PollType, 'binary' | 'versus'>; label: string }[] = [
-  { value: 'binary', label: 'Agree / Disagree' },
-  { value: 'versus', label: 'Would You Rather' },
-];
+const PRESETS = [
+  { a: 'Agree',   b: 'Disagree' },
+  { a: 'Yes',     b: 'No' },
+  { a: 'True',    b: 'False' },
+  { a: 'Support', b: 'Oppose' },
+  { a: 'For',     b: 'Against' },
+  { a: 'Custom',  b: '' },
+] as const;
 
 const MAX_CHARS = 150;
-const MAX_OPTION_CHARS = 50;
+const MAX_TAGS = 5;
+const MAX_OPTION = 20;
+const AMBER = '#C8762A';
+const AMBER_TEXT = '#FFF8F0';
+
+function normalizeTag(raw: string): string {
+  return raw.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 50);
+}
 
 export default function SubmitScreen() {
   const colors = useColors();
+  const isDark = useColorScheme() === 'dark';
   const insets = useSafeAreaInsets();
 
   const [question, setQuestion] = useState('');
   const [category, setCategory] = useState<CategoryKey | null>(null);
-  const [pollType, setPollType] = useState<'binary' | 'versus'>('binary');
-  const [optionA, setOptionA] = useState('');
-  const [optionB, setOptionB] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState(0);
+  const [optionA, setOptionA] = useState('Agree');
+  const [optionB, setOptionB] = useState('Disagree');
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
+  const [questionFocused, setQuestionFocused] = useState(false);
+  const [optAFocused, setOptAFocused] = useState(false);
+  const [optBFocused, setOptBFocused] = useState(false);
 
-  const isVersus = pollType === 'versus';
+  const isCustom = selectedPreset === PRESETS.length - 1;
   const charCount = question.length;
-  const charOverLimit = charCount > MAX_CHARS;
-
   const selectedCategory = category ? CATEGORIES.find(c => c.key === category) ?? null : null;
+
+  // Preview values fall back to defaults when custom inputs are empty
+  const previewA = optionA.trim() || 'Agree';
+  const previewB = optionB.trim() || 'Disagree';
 
   const canSubmit =
     question.trim().length >= 10 &&
-    !charOverLimit &&
+    charCount <= MAX_CHARS &&
     category !== null &&
-    (!isVersus || (optionA.trim().length > 0 && optionB.trim().length > 0));
+    optionA.trim().length >= 1 &&
+    optionB.trim().length >= 1;
+
+  const charCountColor =
+    charCount > 140 ? '#E57373' :
+    charCount > 120 ? AMBER :
+    '#555555';
+
+  // Shared derived colors
+  const inputBg     = isDark ? '#161616' : colors.surface;
+  const inputBorder = isDark ? '#2A2A2A' : colors.border;
+  const cardBg      = isDark ? '#161616' : colors.surface;
+  const cardBorder  = isDark ? '#252525' : colors.border;
+
+  function handlePresetSelect(index: number) {
+    setSelectedPreset(index);
+    if (index < PRESETS.length - 1) {
+      setOptionA(PRESETS[index].a);
+      setOptionB(PRESETS[index].b);
+    } else {
+      setOptionA('');
+      setOptionB('');
+    }
+  }
+
+  function addTag(raw: string) {
+    const normalized = normalizeTag(raw.trim());
+    if (!normalized || tags.includes(normalized) || tags.length >= MAX_TAGS) return;
+    setTags(prev => [...prev, normalized]);
+    setTagInput('');
+  }
+
+  function removeTag(tag: string) {
+    setTags(prev => prev.filter(t => t !== tag));
+  }
+
+  function handleTagInputChange(text: string) {
+    if (text.endsWith(' ') || text.endsWith(',')) {
+      addTag(text.slice(0, -1));
+    } else {
+      setTagInput(text);
+    }
+  }
 
   function resetForm() {
     setQuestion('');
     setCategory(null);
-    setPollType('binary');
-    setOptionA('');
-    setOptionB('');
+    setSelectedPreset(0);
+    setOptionA('Agree');
+    setOptionB('Disagree');
+    setTags([]);
+    setTagInput('');
   }
 
   function handleSubmit() {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
 
+    const pollType = (optionA.trim() === 'Agree' && optionB.trim() === 'Disagree') ? 'binary' : 'versus';
+
     submitPoll(
       question.trim(),
       pollType,
       category!,
-      isVersus ? optionA.trim() : undefined,
-      isVersus ? optionB.trim() : undefined,
+      pollType === 'versus' ? optionA.trim() : undefined,
+      pollType === 'versus' ? optionB.trim() : undefined,
+      tags.length > 0 ? tags : undefined,
     ).then(() => {
       setSubmitting(false);
       resetForm();
@@ -113,187 +179,251 @@ export default function SubmitScreen() {
             showsVerticalScrollIndicator={false}
           >
             {/* Header */}
-            <View style={styles.titleRow}>
-              <Text style={[styles.screenTitle, { color: colors.text }]}>Start a Debate</Text>
-              <Text style={[styles.subtitle, { color: colors.textTertiary }]}>
-                Ask the world a question and see how it votes
+            <View>
+              <Text style={[styles.screenTitle, { color: isDark ? '#F5F5F5' : colors.text }]}>
+                Start a Debate
               </Text>
+              <Text style={styles.screenSubtitle}>Ask the world something.</Text>
             </View>
 
-            {/* Question input */}
-            <View style={styles.section}>
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Question</Text>
+            {/* ── Live Preview Card ── */}
+            <View>
+            <View style={styles.previewLabelRow}>
+              <View style={styles.previewDot} />
+              <Text style={styles.previewLabel}>LIVE PREVIEW</Text>
+            </View>
+            <View style={[styles.previewCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
+              <View style={[styles.previewCategoryChip, {
+                backgroundColor: isDark ? '#1E1E1E' : colors.surfaceAlt,
+                borderColor: isDark ? '#2A2A2A' : colors.border,
+              }]}>
+                <Text style={[styles.previewCategoryText, {
+                  color: selectedCategory ? (isDark ? '#888888' : colors.textSecondary) : '#444444',
+                }]}>
+                  {selectedCategory ? selectedCategory.label : 'Category'}
+                </Text>
+              </View>
+
+              {question.trim().length > 0 ? (
+                <Text style={[styles.previewQuestion, { color: isDark ? '#F5F5F5' : colors.text }]}>
+                  {question}
+                </Text>
+              ) : (
+                <Text style={styles.previewQuestionEmpty}>
+                  Your question will appear here...
+                </Text>
+              )}
+
+              <View style={styles.previewBar} />
+
+              <View style={styles.previewBtns}>
+                <View style={[styles.previewBtn, {
+                  backgroundColor: isDark ? '#1E1E1E' : colors.surfaceAlt,
+                  borderColor: isDark ? '#2A2A2A' : colors.border,
+                }]}>
+                  <Text style={[styles.previewBtnText, { color: isDark ? '#555555' : colors.textTertiary }]} numberOfLines={1}>
+                    {previewA}
+                  </Text>
+                </View>
+                <View style={[styles.previewBtn, {
+                  backgroundColor: isDark ? '#1E1E1E' : colors.surfaceAlt,
+                  borderColor: isDark ? '#2A2A2A' : colors.border,
+                }]}>
+                  <Text style={[styles.previewBtnText, { color: isDark ? '#555555' : colors.textTertiary }]} numberOfLines={1}>
+                    {previewB}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.previewMeta}>Be the first to vote</Text>
+            </View>
+            </View>
+
+            {/* ── Question Input ── */}
+            <View>
               <TextInput
                 style={[
                   styles.questionInput,
                   {
-                    backgroundColor: colors.surface,
-                    color: colors.text,
-                    borderColor: charOverLimit ? colors.disagree : colors.border,
-                    fontFamily: 'Syne_700Bold',
+                    backgroundColor: inputBg,
+                    color: isDark ? '#F5F5F5' : colors.text,
+                    borderColor: questionFocused ? AMBER : inputBorder,
                   },
                 ]}
                 placeholder="Ask the world something..."
-                placeholderTextColor={colors.textTertiary}
+                placeholderTextColor="#333333"
                 value={question}
                 onChangeText={setQuestion}
+                onFocus={() => setQuestionFocused(true)}
+                onBlur={() => setQuestionFocused(false)}
                 multiline
                 returnKeyType="done"
                 blurOnSubmit
               />
-              <Text
-                style={[
-                  styles.charCount,
-                  { color: charCount > 130 ? colors.disagree : colors.textTertiary },
-                ]}
-              >
+              <Text style={[styles.charCounter, { color: charCountColor }]}>
                 {charCount} / {MAX_CHARS}
               </Text>
             </View>
 
-            {/* Poll type — two options in a row */}
+            {/* ── How will people vote? ── */}
             <View style={styles.section}>
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Poll Type</Text>
-              <View style={styles.typeRow}>
-                {POLL_TYPES.map(pt => {
-                  const active = pollType === pt.value;
+              <View style={styles.sectionHead}>
+                <Text style={[styles.sectionTitle, { color: isDark ? '#F5F5F5' : colors.text }]}>
+                  How will people vote?
+                </Text>
+                <Text style={styles.sectionSubtitle}>Choose or customize the vote buttons</Text>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.presetsRow}
+              >
+                {PRESETS.map((preset, i) => {
+                  const active = selectedPreset === i;
+                  const label = i === PRESETS.length - 1 ? 'Custom' : `${preset.a} / ${preset.b}`;
                   return (
                     <TouchableOpacity
-                      key={pt.value}
+                      key={i}
                       style={[
-                        styles.typeBtn,
-                        {
-                          backgroundColor: active ? colors.primary : colors.surface,
-                          borderColor: active ? colors.primary : colors.border,
-                        },
+                        styles.presetPill,
+                        active
+                          ? styles.presetPillActive
+                          : styles.presetPillInactive,
                       ]}
-                      onPress={() => setPollType(pt.value)}
-                      activeOpacity={0.75}
+                      onPress={() => handlePresetSelect(i)}
+                      activeOpacity={0.8}
                     >
-                      <Text
-                        style={[
-                          styles.typeBtnLabel,
-                          { color: active ? '#fff' : colors.textSecondary },
-                        ]}
-                        numberOfLines={2}
-                      >
-                        {pt.label}
+                      <Text style={[
+                        styles.presetPillText,
+                        { color: active ? AMBER_TEXT : '#666666', fontFamily: active ? 'Inter_600SemiBold' : 'Inter_400Regular' },
+                      ]}>
+                        {label}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
+
+              {isCustom && (
+                <View style={styles.customRow}>
+                  <TextInput
+                    style={[
+                      styles.customInput,
+                      {
+                        backgroundColor: inputBg,
+                        color: isDark ? '#F5F5F5' : colors.text,
+                        borderColor: optAFocused ? AMBER : inputBorder,
+                      },
+                    ]}
+                    placeholder="Yes"
+                    placeholderTextColor="#333333"
+                    value={optionA}
+                    onChangeText={t => setOptionA(t.slice(0, MAX_OPTION))}
+                    onFocus={() => setOptAFocused(true)}
+                    onBlur={() => setOptAFocused(false)}
+                    returnKeyType="next"
+                  />
+                  <Text style={styles.customSep}>/</Text>
+                  <TextInput
+                    style={[
+                      styles.customInput,
+                      {
+                        backgroundColor: inputBg,
+                        color: isDark ? '#F5F5F5' : colors.text,
+                        borderColor: optBFocused ? AMBER : inputBorder,
+                      },
+                    ]}
+                    placeholder="No"
+                    placeholderTextColor="#333333"
+                    value={optionB}
+                    onChangeText={t => setOptionB(t.slice(0, MAX_OPTION))}
+                    onFocus={() => setOptBFocused(true)}
+                    onBlur={() => setOptBFocused(false)}
+                    returnKeyType="done"
+                  />
+                </View>
+              )}
             </View>
 
-            {/* Versus options */}
-            {isVersus && (
-              <View style={styles.section}>
-                <Text style={[styles.label, { color: colors.textSecondary }]}>Options</Text>
-                <View style={styles.versusRow}>
-                  <View style={styles.versusField}>
-                    <Text style={[styles.versusFieldLabel, { color: colors.agreeText }]}>Option A</Text>
-                    <TextInput
-                      style={[
-                        styles.versusInput,
-                        {
-                          backgroundColor: colors.agreeLight,
-                          color: colors.text,
-                          borderColor: optionA ? colors.agreeBorder : colors.border,
-                        },
-                      ]}
-                      placeholder="Option A..."
-                      placeholderTextColor={colors.textTertiary}
-                      value={optionA}
-                      onChangeText={t => setOptionA(t.slice(0, MAX_OPTION_CHARS))}
-                      returnKeyType="next"
-                    />
-                    <Text style={[styles.charCount, { color: colors.textTertiary }]}>
-                      {optionA.length} / {MAX_OPTION_CHARS}
-                    </Text>
-                  </View>
-                  <View style={styles.versusField}>
-                    <Text style={[styles.versusFieldLabel, { color: colors.disagreeText }]}>Option B</Text>
-                    <TextInput
-                      style={[
-                        styles.versusInput,
-                        {
-                          backgroundColor: colors.disagreeLight,
-                          color: colors.text,
-                          borderColor: optionB ? colors.disagreeBorder : colors.border,
-                        },
-                      ]}
-                      placeholder="Option B..."
-                      placeholderTextColor={colors.textTertiary}
-                      value={optionB}
-                      onChangeText={t => setOptionB(t.slice(0, MAX_OPTION_CHARS))}
-                      returnKeyType="done"
-                    />
-                    <Text style={[styles.charCount, { color: colors.textTertiary }]}>
-                      {optionB.length} / {MAX_OPTION_CHARS}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {/* Category picker */}
+            {/* ── Category ── */}
             <View style={styles.section}>
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Category</Text>
+              <Text style={[styles.sectionTitle, { color: isDark ? '#F5F5F5' : colors.text }]}>
+                Category
+              </Text>
               <TouchableOpacity
                 style={[
                   styles.categorySelector,
                   {
-                    backgroundColor: colors.surface,
-                    borderColor: selectedCategory ? selectedCategory.color : colors.border,
-                    borderWidth: selectedCategory ? 1.5 : 1,
+                    backgroundColor: inputBg,
+                    borderColor: selectedCategory ? AMBER : inputBorder,
                   },
                 ]}
                 onPress={() => setPickerOpen(true)}
                 activeOpacity={0.75}
               >
-                <View style={styles.categorySelectorInner}>
-                  {selectedCategory && (
-                    <View style={[styles.colorDot, { backgroundColor: selectedCategory.color }]} />
-                  )}
-                  <Text
-                    style={[
-                      styles.categorySelectorText,
-                      { color: selectedCategory ? colors.text : colors.textTertiary },
-                    ]}
-                  >
-                    {selectedCategory ? selectedCategory.label : 'Select a category...'}
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-down"
-                  size={16}
-                  color={selectedCategory ? selectedCategory.color : colors.textTertiary}
-                />
+                <Text style={[
+                  styles.categorySelectorText,
+                  {
+                    color: selectedCategory ? (isDark ? '#F5F5F5' : colors.text) : '#333333',
+                    fontFamily: selectedCategory ? 'Inter_500Medium' : 'Inter_400Regular',
+                  },
+                ]}>
+                  {selectedCategory ? selectedCategory.label : 'Select a category...'}
+                </Text>
+                <Ionicons name="chevron-down-outline" size={16} color="#555555" />
               </TouchableOpacity>
+            </View>
+
+            {/* ── Tags ── */}
+            <View style={styles.section}>
+              <View style={styles.tagHeadRow}>
+                <Text style={[styles.sectionTitle, { color: isDark ? '#F5F5F5' : colors.text }]}>Tags</Text>
+                <Text style={styles.tagCount}>{tags.length}/{MAX_TAGS}</Text>
+              </View>
+
+              {tags.length > 0 && (
+                <View style={styles.tagPills}>
+                  {tags.map(tag => (
+                    <TouchableOpacity key={tag} style={styles.tagPill} onPress={() => removeTag(tag)} activeOpacity={0.75}>
+                      <Text style={styles.tagPillText}>#{tag}</Text>
+                      <Text style={styles.tagPillRemove}>×</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {tags.length < MAX_TAGS && (
+                <TextInput
+                  style={[styles.tagInput, { backgroundColor: inputBg, borderColor: inputBorder, color: isDark ? '#F5F5F5' : colors.text }]}
+                  placeholder="Add a tag..."
+                  placeholderTextColor="#333333"
+                  value={tagInput}
+                  onChangeText={handleTagInputChange}
+                  onSubmitEditing={() => { if (tagInput.trim()) addTag(tagInput); }}
+                  returnKeyType="done"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              )}
+
+              <Text style={styles.tagHint}>Press space or comma to add · tap to remove</Text>
             </View>
           </ScrollView>
 
-          {/* Submit button */}
-          <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+          {/* Fixed submit button */}
+          <View style={[styles.footer, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 16) }]}>
             <TouchableOpacity
-              style={[
-                styles.submitBtn,
-                { backgroundColor: canSubmit ? colors.primary : colors.surfaceAlt },
-              ]}
+              style={[styles.submitBtn, { backgroundColor: canSubmit ? AMBER : '#1E1E1E' }]}
               onPress={handleSubmit}
               disabled={!canSubmit || submitting}
               activeOpacity={0.85}
             >
               {submitting ? (
-                <ActivityIndicator color="#fff" size="small" />
+                <ActivityIndicator color={AMBER_TEXT} size="small" />
               ) : (
-                <Text
-                  style={[
-                    styles.submitBtnText,
-                    { color: canSubmit ? '#fff' : colors.textTertiary },
-                  ]}
-                >
-                  Submit for Review
+                <Text style={[styles.submitBtnText, { color: canSubmit ? AMBER_TEXT : '#444444' }]}>
+                  Start the Debate
                 </Text>
               )}
             </TouchableOpacity>
@@ -308,23 +438,9 @@ export default function SubmitScreen() {
         animationType="slide"
         onRequestClose={() => setPickerOpen(false)}
       >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => setPickerOpen(false)}
-        />
-        <View
-          style={[
-            styles.modalSheet,
-            {
-              backgroundColor: colors.background,
-              paddingBottom: Math.max(insets.bottom, 16),
-            },
-          ]}
-        >
-          {/* Sheet handle */}
-          <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
-          <Text style={[styles.sheetTitle, { color: colors.text }]}>Choose a Category</Text>
+        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setPickerOpen(false)} />
+        <View style={[styles.modalSheet, { backgroundColor: isDark ? '#111111' : colors.background, paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View style={[styles.sheetHandle, { backgroundColor: isDark ? '#333333' : colors.border }]} />
           <FlatList
             data={CATEGORIES}
             keyExtractor={item => item.key}
@@ -333,24 +449,14 @@ export default function SubmitScreen() {
               const active = category === item.key;
               return (
                 <TouchableOpacity
-                  style={[
-                    styles.sheetItem,
-                    {
-                      backgroundColor: active ? colors.surfaceAlt : 'transparent',
-                      borderBottomColor: colors.border,
-                    },
-                  ]}
-                  onPress={() => {
-                    setCategory(item.key);
-                    setPickerOpen(false);
-                  }}
+                  style={[styles.sheetItem, { borderBottomColor: isDark ? '#1A1A1A' : colors.border }]}
+                  onPress={() => { setCategory(item.key); setPickerOpen(false); }}
                   activeOpacity={0.7}
                 >
-                  <View style={[styles.colorDot, { backgroundColor: item.color }]} />
-                  <Text style={[styles.sheetItemText, { color: colors.text }]}>{item.label}</Text>
-                  {active && (
-                    <Ionicons name="checkmark" size={18} color={item.color} />
-                  )}
+                  <Text style={[styles.sheetItemText, { color: isDark ? '#F5F5F5' : colors.text }]}>
+                    {item.label}
+                  </Text>
+                  {active && <Ionicons name="checkmark-outline" size={18} color={AMBER} />}
                 </TouchableOpacity>
               );
             }}
@@ -358,7 +464,6 @@ export default function SubmitScreen() {
         </View>
       </Modal>
 
-      {/* Toast */}
       {toast && (
         <Toast
           message={toast.message}
@@ -378,116 +483,266 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: {
     padding: 16,
+    paddingBottom: 100,
     gap: 24,
-    paddingBottom: 32,
   },
-  titleRow: { gap: 4 },
+
+  // Header
   screenTitle: {
-    fontFamily: 'Syne_700Bold',
-    fontSize: 24,
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 22,
+    letterSpacing: -0.3,
   },
-  subtitle: {
-    fontFamily: 'DMSans_400Regular',
+  screenSubtitle: {
+    fontFamily: 'Inter_400Regular',
     fontSize: 13,
+    color: '#555555',
+    marginTop: 4,
   },
-  section: { gap: 8 },
-  label: {
-    fontFamily: 'DMSans_500Medium',
-    fontSize: 13,
+
+  // Preview label
+  previewLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
   },
-  questionInput: {
-    minHeight: 96,
-    borderRadius: 8,
+  previewDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 99,
+    backgroundColor: '#C8762A',
+  },
+  previewLabel: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
+    letterSpacing: 0.8,
+    color: '#555555',
+  },
+
+  // Preview Card
+  previewCard: {
+    borderRadius: 16,
     borderWidth: 1,
-    padding: 12,
-    fontSize: 17,
-    lineHeight: 24,
-    textAlignVertical: 'top',
+    padding: 16,
+    gap: 10,
   },
-  charCount: {
-    fontFamily: 'DMSans_400Regular',
-    fontSize: 11,
-    textAlign: 'right',
+  previewCategoryChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  typeRow: {
+  previewCategoryText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
+    letterSpacing: 0.3,
+  },
+  previewQuestion: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  previewQuestionEmpty: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 15,
+    fontStyle: 'italic',
+    color: '#333333',
+    lineHeight: 20,
+  },
+  previewBar: {
+    height: 5,
+    borderRadius: 99,
+    backgroundColor: '#252525',
+  },
+  previewBtns: {
     flexDirection: 'row',
     gap: 8,
   },
-  typeBtn: {
+  previewBtn: {
     flex: 1,
-    borderRadius: 8,
+    height: 44,
+    borderRadius: 10,
     borderWidth: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 52,
-  },
-  typeBtnLabel: {
-    fontFamily: 'DMSans_500Medium',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  versusRow: { flexDirection: 'row', gap: 8 },
-  versusField: { flex: 1, gap: 4 },
-  versusFieldLabel: {
-    fontFamily: 'DMSans_500Medium',
-    fontSize: 12,
-  },
-  versusInput: {
-    height: 44,
-    borderRadius: 8,
-    borderWidth: 1,
     paddingHorizontal: 12,
-    fontFamily: 'DMSans_400Regular',
+  },
+  previewBtnText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 13,
+  },
+  previewMeta: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+    color: '#444444',
+  },
+
+  // Question input
+  questionInput: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    paddingHorizontal: 16,
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 16,
+    lineHeight: 22,
+    minHeight: 96,
+    textAlignVertical: 'top',
+  },
+  charCounter: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+    textAlign: 'right',
+    marginTop: 6,
+  },
+
+  // Section
+  section: { gap: 10 },
+  sectionHead: { gap: 2 },
+  sectionTitle: {
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 14,
   },
-  // Category selector button
-  categorySelector: {
-    height: 48,
-    borderRadius: 8,
+  sectionSubtitle: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    color: '#555555',
+  },
+
+  // Preset pills
+  presetsRow: { gap: 8, paddingRight: 4 },
+  presetPill: {
+    borderRadius: 99,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  presetPillActive: {
+    backgroundColor: AMBER,
+  },
+  presetPillInactive: {
+    backgroundColor: '#1E1E1E',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+  },
+  presetPillText: {
+    fontSize: 12,
+  },
+
+  // Custom inputs
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  customInput: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 10,
     paddingHorizontal: 12,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 14,
+  },
+  customSep: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 16,
+    color: '#555555',
+    marginHorizontal: 8,
+  },
+
+  // Category selector
+  categorySelector: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 50,
+  },
+  categorySelectorText: {
+    fontSize: 14,
+    flex: 1,
+  },
+
+  // Tags
+  tagHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  categorySelectorInner: {
+  tagCount: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    color: '#555555',
+  },
+  tagPills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  tagPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    flex: 1,
+    gap: 4,
+    backgroundColor: '#1E1E1E',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    borderRadius: 99,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  categorySelectorText: {
-    fontFamily: 'DMSans_400Regular',
+  tagPillText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
+    color: '#888888',
+  },
+  tagPillRemove: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 14,
+    color: '#555555',
+    lineHeight: 16,
+  },
+  tagInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontFamily: 'Inter_400Regular',
     fontSize: 14,
   },
-  colorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 99,
+  tagHint: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+    color: '#444444',
   },
+
+  // Footer
   footer: {
-    padding: 16,
-    borderTopWidth: 0.5,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   submitBtn: {
     height: 52,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   submitBtnText: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 15,
   },
-  // Modal sheet
+
+  // Modal
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalSheet: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     paddingTop: 12,
     maxHeight: '70%',
   },
@@ -496,25 +751,19 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 99,
     alignSelf: 'center',
-    marginBottom: 16,
-  },
-  sheetTitle: {
-    fontFamily: 'Syne_700Bold',
-    fontSize: 17,
-    paddingHorizontal: 16,
     marginBottom: 8,
   },
   sheetItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 14,
-    borderBottomWidth: 0.5,
+    borderBottomWidth: 1,
   },
   sheetItemText: {
-    fontFamily: 'DMSans_400Regular',
-    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 14,
     flex: 1,
   },
 });

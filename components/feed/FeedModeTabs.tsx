@@ -1,22 +1,33 @@
 import { ScrollView, TouchableOpacity, Text, StyleSheet, View } from 'react-native';
 import { useColors } from '@/constants/colors';
-import type { FeedMode } from '@/hooks/useFeed';
+import type { FeedFilter } from '@/hooks/useFeed';
 
-const MODES: { key: FeedMode; label: string }[] = [
-  { key: 'trending', label: 'Trending' },
-  { key: 'closest', label: 'Closest' },
-  { key: 'fresh', label: 'Fresh' },
-  { key: 'for_you', label: 'For You' },
-  { key: 'review', label: 'In Review' },
+const FILTERS: { key: FeedFilter; label: string }[] = [
+  { key: 'all',           label: 'All' },
+  { key: 'for_you',       label: 'For You' },
+  { key: 'timed',         label: 'Timed' },
+  { key: 'politics',      label: 'Politics' },
+  { key: 'culture',       label: 'Culture' },
+  { key: 'food',          label: 'Food' },
+  { key: 'ethics',        label: 'Ethics' },
+  { key: 'sports',        label: 'Sports' },
+  { key: 'tech',          label: 'Tech' },
+  { key: 'relationships', label: 'Relationships' },
+  { key: 'hypothetical',  label: 'Hypothetical' },
+  { key: 'news',          label: 'News' },
+  { key: 'entertainment', label: 'Entertainment' },
+  { key: 'other',         label: 'Other' },
+  { key: 'review',        label: 'In Review' },
 ];
 
 interface Props {
-  active: FeedMode;
-  onSelect: (mode: FeedMode) => void;
+  active: FeedFilter;
+  onSelect: (filter: FeedFilter) => void;
 }
 
 export function FeedModeTabs({ active, onSelect }: Props) {
   const colors = useColors();
+
   return (
     <View style={[styles.wrapper, { borderBottomColor: colors.border }]}>
       <ScrollView
@@ -24,7 +35,7 @@ export function FeedModeTabs({ active, onSelect }: Props) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.row}
       >
-        {MODES.map(({ key, label }) => {
+        {FILTERS.map(({ key, label }) => {
           const isActive = active === key;
           return (
             <TouchableOpacity
@@ -34,16 +45,11 @@ export function FeedModeTabs({ active, onSelect }: Props) {
               style={[
                 styles.pill,
                 isActive
-                  ? { backgroundColor: colors.primary }
-                  : { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 },
+                  ? { backgroundColor: colors.accent }
+                  : { backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderWidth: 0.5 },
               ]}
             >
-              <Text
-                style={[
-                  styles.label,
-                  { color: isActive ? '#fff' : colors.textSecondary },
-                ]}
-              >
+              <Text style={[styles.label, { color: isActive ? colors.accentText : colors.textSecondary }]}>
                 {label}
               </Text>
             </TouchableOpacity>
@@ -67,11 +73,11 @@ const styles = StyleSheet.create({
   },
   pill: {
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 99,
   },
   label: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_500Medium',
     fontSize: 13,
   },
 });

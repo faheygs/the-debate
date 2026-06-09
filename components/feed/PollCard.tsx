@@ -1,97 +1,42 @@
-import { useEffect, useRef } from 'react';
-import { View, Text, Animated, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
+import { useEffect, useRef, memo } from 'react';
+import { View, Text, Animated, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/constants/colors';
 import { VoteButtons } from '@/components/poll/VoteButtons';
+import { VoteBar } from '@/components/poll/VoteBar';
 import { formatVoteCount } from '@/components/shared/VoteCount';
 import { usePollState } from '@/contexts/PollStateContext';
 import type { PollWithCounts } from '@/types/database';
 
-// ── Category badge colors ────────────────────────────────────────────────────
+// ── Status label ──────────────────────────────────────────────────────────────
 
-const CATEGORY_LIGHT: Record<string, { bg: string; text: string }> = {
-  politics:      { bg: '#EEF2FF', text: '#4338CA' },
-  culture:       { bg: '#F5F3FF', text: '#7C3AED' },
-  food:          { bg: '#FEE2E2', text: '#991B1B' },
-  ethics:        { bg: '#FFFBEB', text: '#92400E' },
-  sports:        { bg: '#F0FDF4', text: '#166534' },
-  tech:          { bg: '#EFF6FF', text: '#1D4ED8' },
-  relationships: { bg: '#FDF2F8', text: '#9D174D' },
-  hypothetical:  { bg: '#F0FDFA', text: '#0F766E' },
-  news:          { bg: '#F9FAFB', text: '#374151' },
-  entertainment: { bg: '#FFF7ED', text: '#9A3412' },
-};
-
-const CATEGORY_DARK: Record<string, { bg: string; text: string }> = {
-  politics:      { bg: '#1E1B4B', text: '#A5B4FC' },
-  culture:       { bg: '#2E1065', text: '#C4B5FD' },
-  food:          { bg: '#450A0A', text: '#FCA5A5' },
-  ethics:        { bg: '#2D1B00', text: '#FCD34D' },
-  sports:        { bg: '#052E16', text: '#6EE7B7' },
-  tech:          { bg: '#0C1A3B', text: '#93C5FD' },
-  relationships: { bg: '#4A0D2E', text: '#F9A8D4' },
-  hypothetical:  { bg: '#021716', text: '#5EEAD4' },
-  news:          { bg: '#111827', text: '#9CA3AF' },
-  entertainment: { bg: '#431407', text: '#FDBA74' },
-};
-
-// ── Status badge ─────────────────────────────────────────────────────────────
-
-type StatusBadge = {
+type StatusInfo = {
   label: string;
   iconName: React.ComponentProps<typeof Ionicons>['name'];
-  bg: string;
-  textColor: string;
+  isHot: boolean;
 };
 
-function getStatusBadge(poll: PollWithCounts, velocity?: number): StatusBadge | null {
-  if (velocity && velocity > 500) {
-    return { label: 'Trending', iconName: 'flame-outline', bg: '#FEF3C7', textColor: '#92400E' };
-  }
-  if (velocity && velocity > 100) {
-    return { label: 'Hot', iconName: 'flash-outline', bg: '#FEF3C7', textColor: '#92400E' };
-  }
+function getStatus(poll: PollWithCounts, velocity?: number): StatusInfo | null {
+  if (velocity && velocity > 500) return { label: 'Trending', iconName: 'flame-outline', isHot: true };
+  if (velocity && velocity > 100) return { label: 'Hot', iconName: 'flash-outline', isHot: true };
   if (poll.expires_at) {
     const msLeft = new Date(poll.expires_at).getTime() - Date.now();
-    if (msLeft < 2 * 60 * 60 * 1000) {
-      return { label: 'Closing', iconName: 'time-outline', bg: '#FFF1F2', textColor: '#E11D48' };
-    }
+    if (msLeft < 2 * 60 * 60 * 1000) return { label: 'Closing', iconName: 'time-outline', isHot: false };
   }
   if (poll.promoted_at) {
     const ageHours = (Date.now() - new Date(poll.promoted_at).getTime()) / (60 * 60 * 1000);
-    if (ageHours < 6) {
-      return { label: 'Fresh', iconName: 'sparkles-outline', bg: '#EEF2FF', textColor: '#4338CA' };
-    }
+    if (ageHours < 6) return { label: 'Fresh', iconName: 'sparkles-outline', isHot: false };
   }
   return null;
 }
 
-// ── Animated vote bar ─────────────────────────────────────────────────────────
-
-function VoteBar({ yesPct, colors }: { yesPct: number; colors: ReturnType<typeof useColors> }) {
-  const yesAnim = useRef(new Animated.Value(yesPct)).current;
-  const noAnim = useRef(new Animated.Value(100 - yesPct)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.spring(yesAnim, { toValue: yesPct, tension: 180, friction: 22, useNativeDriver: false }),
-      Animated.spring(noAnim, { toValue: 100 - yesPct, tension: 180, friction: 22, useNativeDriver: false }),
-    ]).start();
-  }, [yesPct]);
-
-  return (
-    <View style={[barStyles.track, { backgroundColor: colors.surfaceAlt }]}>
-      <Animated.View style={[barStyles.fill, { flex: yesAnim, backgroundColor: colors.agree }]} />
-      <Animated.View style={[barStyles.fill, { flex: noAnim, backgroundColor: colors.disagree }]} />
-    </View>
-  );
+function getMajorityLabel(userVote: 1 | -1, yesPct: number): string {
+  if (yesPct === 50) return '';
+  const userAgreed = userVote === 1;
+  const majorityAgreed = yesPct > 50;
+  return userAgreed === majorityAgreed ? 'you voted with the majority' : 'you voted with the minority';
 }
-
-const barStyles = StyleSheet.create({
-  track: { flexDirection: 'row', height: 6, borderRadius: 99, overflow: 'hidden' },
-  fill: {},
-});
 
 // ── PollCard ──────────────────────────────────────────────────────────────────
 
@@ -103,44 +48,50 @@ interface Props {
   userVote: 1 | -1 | null;
   onVote: (pollId: string, value: 1 | -1) => void;
   onUpvote?: (pollId: string) => void;
+  onTagPress?: (tag: string) => void;
 }
 
-export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
+export const PollCard = memo(function PollCard({ poll, index, userVote, onVote, onUpvote, onTagPress }: Props) {
   const colors = useColors();
-  const isDark = useColorScheme() === 'dark';
   const ctx = usePollState();
   const override = ctx.getPollState(poll.id);
 
   const total = override?.total_count ?? poll.total_count;
   const yes = override?.yes_count ?? poll.yes_count;
   const effectiveVote = override?.user_vote ?? userVote;
+  const voted = effectiveVote !== null;
 
-  // Enter animation — staggered fade + 4px slide up
   const enterOpacity = useRef(new Animated.Value(0)).current;
   const enterTranslate = useRef(new Animated.Value(4)).current;
 
   useEffect(() => {
     const delay = Math.min(index * 60, 300);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       Animated.parallel([
         Animated.timing(enterOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
         Animated.timing(enterTranslate, { toValue: 0, duration: 200, useNativeDriver: true }),
       ]).start();
     }, delay);
+    return () => clearTimeout(timer);
   }, []);
 
   const yesPct = total > 0 ? (yes / total) * 100 : 50;
   const commentCount = poll.comment_count ?? 0;
-  const isPending = poll.status === 'pending';
+  const status = getStatus(poll, poll.velocity);
 
-  const catColors = (isDark ? CATEGORY_DARK : CATEGORY_LIGHT)[poll.category] ??
-    (isDark ? CATEGORY_DARK.news : CATEGORY_LIGHT.news);
+  const metaText = (() => {
+    if (!voted) {
+      if (total === 0) return 'Be the first to vote';
+      return `${formatVoteCount(total)} votes · ${formatVoteCount(commentCount)} opinions`;
+    }
+    const majority = getMajorityLabel(effectiveVote!, yesPct);
+    const base = `${formatVoteCount(total)} votes · ${formatVoteCount(commentCount)} opinions`;
+    return majority ? `${base} · ${majority}` : base;
+  })();
 
-  const statusBadge = getStatusBadge(poll, poll.velocity);
+  // ── Pending card ──────────────────────────────────────────────────────────
 
-  // ── Pending (review) card ─────────────────────────────────────────────────
-
-  if (isPending) {
+  if (poll.status === 'pending') {
     const upvoteCount = poll.upvote_count ?? 0;
     const neededMore = Math.max(0, UPVOTE_THRESHOLD - upvoteCount);
     const userUpvoted = poll.user_upvoted ?? false;
@@ -148,39 +99,33 @@ export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
     return (
       <Animated.View style={{ opacity: enterOpacity, transform: [{ translateY: enterTranslate }] }}>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          {/* Header */}
           <View style={styles.header}>
-            <View style={[styles.badge, { backgroundColor: catColors.bg }]}>
-              <Text style={[styles.badgeText, { color: catColors.text }]}>
+            <View style={[styles.badge, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+              <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
                 {poll.category.toUpperCase()}
               </Text>
             </View>
-            <View style={[styles.badge, styles.badgeRow, { backgroundColor: '#FEF3C7' }]}>
-              <Ionicons name="time-outline" size={10} color="#92400E" />
-              <Text style={[styles.badgeText, { color: '#92400E' }]}>In Review</Text>
+            <View style={[styles.badge, styles.badgeRow, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+              <Ionicons name="time-outline" size={10} color={colors.textTertiary} />
+              <Text style={[styles.badgeText, { color: colors.textTertiary }]}>In Review</Text>
             </View>
           </View>
 
-          {/* Question */}
           <Text style={[styles.question, { color: colors.text }]} numberOfLines={2} ellipsizeMode="tail">
             {poll.question}
           </Text>
 
-          {/* Upvote progress bar */}
-          <View style={[barStyles.track, { backgroundColor: colors.surfaceAlt }]}>
+          <View style={[styles.pendingBar, { backgroundColor: colors.surfaceAlt }]}>
             <View
-              style={[
-                barStyles.fill,
-                {
-                  flex: Math.max(upvoteCount, 0),
-                  backgroundColor: colors.primary,
-                },
-              ]}
+              style={{
+                height: 5,
+                borderRadius: 99,
+                width: `${Math.min((upvoteCount / UPVOTE_THRESHOLD) * 100, 100)}%`,
+                backgroundColor: colors.accent,
+              }}
             />
-            <View style={{ flex: Math.max(UPVOTE_THRESHOLD - upvoteCount, 0) }} />
           </View>
 
-          {/* Upvote info row + button */}
           <View style={styles.pendingRow}>
             <Text style={[styles.infoText, { color: colors.textTertiary }]}>
               {neededMore > 0
@@ -191,8 +136,8 @@ export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
               style={[
                 styles.upvoteBtn,
                 {
-                  backgroundColor: userUpvoted ? colors.primary : colors.surface,
-                  borderColor: userUpvoted ? colors.primary : colors.border,
+                  backgroundColor: userUpvoted ? colors.accent : colors.surface,
+                  borderColor: userUpvoted ? colors.accent : colors.border,
                 },
               ]}
               onPress={() => !userUpvoted && onUpvote?.(poll.id)}
@@ -202,9 +147,9 @@ export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
               <Ionicons
                 name={userUpvoted ? 'thumbs-up' : 'thumbs-up-outline'}
                 size={14}
-                color={userUpvoted ? '#fff' : colors.textSecondary}
+                color={userUpvoted ? colors.accentText : colors.textSecondary}
               />
-              <Text style={[styles.upvoteBtnText, { color: userUpvoted ? '#fff' : colors.textSecondary }]}>
+              <Text style={[styles.upvoteBtnText, { color: userUpvoted ? colors.accentText : colors.textSecondary }]}>
                 {upvoteCount}
               </Text>
             </TouchableOpacity>
@@ -217,67 +162,62 @@ export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
   // ── Live card ─────────────────────────────────────────────────────────────
 
   return (
-    <Animated.View
-      style={{ opacity: enterOpacity, transform: [{ translateY: enterTranslate }] }}
-    >
-      <TouchableOpacity
-        activeOpacity={0.92}
-        onPress={() => router.push(`/poll/${poll.id}`)}
-      >
+    <Animated.View style={{ opacity: enterOpacity, transform: [{ translateY: enterTranslate }] }}>
+      <TouchableOpacity activeOpacity={0.92} onPress={() => router.push(`/poll/${poll.id}`)}>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
 
-          {/* Header row — category badge left, status badge right */}
           <View style={styles.header}>
-            <View style={[styles.badge, { backgroundColor: catColors.bg }]}>
-              <Text style={[styles.badgeText, { color: catColors.text }]}>
+            <View style={[styles.badge, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+              <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
                 {poll.category.toUpperCase()}
               </Text>
             </View>
-            {statusBadge && (
-              <View style={[styles.badge, styles.badgeRow, { backgroundColor: statusBadge.bg }]}>
-                <Ionicons name={statusBadge.iconName} size={10} color={statusBadge.textColor} />
-                <Text style={[styles.badgeText, { color: statusBadge.textColor }]}>
-                  {statusBadge.label}
+            {status && (
+              <View style={[styles.badge, styles.badgeRow, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+                <Ionicons
+                  name={status.iconName}
+                  size={10}
+                  color={status.isHot ? colors.accent : colors.textTertiary}
+                />
+                <Text style={[styles.badgeText, { color: status.isHot ? colors.accent : colors.textTertiary }]}>
+                  {status.label}
                 </Text>
               </View>
             )}
           </View>
 
-          {/* Poll question */}
-          <Text
-            style={[styles.question, { color: colors.text }]}
-            numberOfLines={2}
-            ellipsizeMode="tail"
-          >
+          <Text style={[styles.question, { color: colors.text }]} numberOfLines={2} ellipsizeMode="tail">
             {poll.question}
           </Text>
 
-          {/* Vote bar — solid gray when 0 votes */}
-          {total === 0 ? (
-            <View style={[barStyles.track, { backgroundColor: colors.surfaceAlt }]} />
-          ) : (
-            <VoteBar yesPct={yesPct} colors={colors} />
-          )}
+          <VoteBar agreePct={yesPct} userVote={effectiveVote} totalVotes={total} />
 
-          {/* Info row — "votes · voices" or zero-state prompt */}
-          {total === 0 ? (
-            <Text style={[styles.infoText, { color: colors.textTertiary }]}>
-              Be the first to vote
+          <View style={styles.metaRow}>
+            <Text style={[styles.infoText, { color: colors.textTertiary, flex: 1 }]} numberOfLines={1}>
+              {metaText}
             </Text>
-          ) : (
-            <View style={styles.infoRow}>
-              <Text style={[styles.infoText, { color: colors.textTertiary }]}>
-                {formatVoteCount(total)} votes
-              </Text>
-              <Text style={[styles.infoText, { color: colors.textTertiary }]}>{' · '}</Text>
-              <Ionicons name="chatbubble-outline" size={11} color={colors.textTertiary} />
-              <Text style={[styles.infoText, { color: colors.textTertiary }]}>
-                {' '}{formatVoteCount(commentCount)} voices
-              </Text>
-            </View>
+            <Ionicons name="chevron-forward-outline" size={14} color={colors.textTertiary} />
+          </View>
+
+          {poll.tags && poll.tags.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tagRow}
+            >
+              {poll.tags.map(tag => (
+                <TouchableOpacity
+                  key={tag}
+                  onPress={(e) => { e.stopPropagation(); onTagPress?.(tag); }}
+                  activeOpacity={0.7}
+                  style={[styles.tagPill, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
+                >
+                  <Text style={[styles.tagText, { color: colors.textTertiary }]}>#{tag}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           )}
 
-          {/* Vote buttons */}
           <VoteButtons
             pollType={poll.poll_type as any}
             optionA={poll.option_a}
@@ -289,11 +229,11 @@ export function PollCard({ poll, index, userVote, onVote, onUpvote }: Props) {
       </TouchableOpacity>
     </Animated.View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 0.5,
     padding: 16,
     marginBottom: 12,
@@ -307,7 +247,8 @@ const styles = StyleSheet.create({
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: 6,
+    borderWidth: 0.5,
   },
   badgeRow: {
     flexDirection: 'row',
@@ -315,22 +256,28 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   badgeText: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_500Medium',
     fontSize: 10,
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
   },
   question: {
-    fontFamily: 'Syne_700Bold',
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 17,
-    lineHeight: 22,
+    lineHeight: 23,
   },
-  infoRow: {
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
   infoText: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 11,
+  },
+  pendingBar: {
+    height: 5,
+    borderRadius: 99,
+    overflow: 'hidden',
   },
   pendingRow: {
     flexDirection: 'row',
@@ -347,7 +294,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   upvoteBtnText: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_500Medium',
     fontSize: 13,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  tagPill: {
+    borderRadius: 99,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  tagText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
   },
 });

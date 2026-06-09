@@ -40,7 +40,9 @@ export function subscribeToFeed(onDelta: (delta: FeedDelta) => void): () => void
 
   channels.set(name, channel);
 
-  return () => unsubscribeFromChannel(name);
+  return () => {
+    if (channels.get(name) === channel) unsubscribeFromChannel(name);
+  };
 }
 
 // ── Poll vote counts ──────────────────────────────────────────────────────
@@ -64,7 +66,9 @@ export function subscribeToPoll(
 
   channels.set(name, channel);
 
-  return () => unsubscribeFromChannel(name);
+  return () => {
+    if (channels.get(name) === channel) unsubscribeFromChannel(name);
+  };
 }
 
 // ── Poll comments ─────────────────────────────────────────────────────────
@@ -99,7 +103,9 @@ export function subscribeToPollComments(
 
   channels.set(name, channel);
 
-  return () => unsubscribeFromChannel(name);
+  return () => {
+    if (channels.get(name) === channel) unsubscribeFromChannel(name);
+  };
 }
 
 // ── Private user channel (moderation results) ─────────────────────────────
@@ -129,7 +135,9 @@ export function subscribeToUserPrivate(
 
   channels.set(name, channel);
 
-  return () => unsubscribeFromChannel(name);
+  return () => {
+    if (channels.get(name) === channel) unsubscribeFromChannel(name);
+  };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ export interface DbUser {
   comment_strikes: number;
   comment_banned: boolean;
   has_seen_tour: boolean;
+  expo_push_token: string | null;
   created_at: string;
   last_active_at: string;
 }
@@ -102,6 +103,7 @@ export interface PollWithCounts extends DbPoll {
   user_vote: 1 | -1 | null;
   comment_count?: number;
   user_upvoted?: boolean;
+  tags?: string[];
 }
 
 export interface SubmitPollResponse {
@@ -113,6 +115,57 @@ export interface UpvotePollResponse {
   upvoted: boolean;
   promoted: boolean;
   upvote_count: number;
+}
+
+export interface VoteHistoryItem {
+  poll_id: string;
+  question: string;
+  category: string;
+  poll_type: string;
+  option_a: string | null;
+  option_b: string | null;
+  value: number; // 1 | -1
+  yes_count: number;
+  no_count: number;
+  total_count: number;
+  voted_at: string;
+}
+
+export interface BoardStats {
+  total_votes: number;
+  contrarian_score: number; // 0–100 percentage, one decimal
+  top_category: string | null;
+  actual_lean: number | null; // -2 to +2
+}
+
+export interface PersonalBoardResponse {
+  vote_history: VoteHistoryItem[];
+  stats: BoardStats;
+  insights: DbUserInsight | null;
+  vote_count_at_generation: number;
+}
+
+export interface GenerateInsightsResponse {
+  generated: boolean;
+  insights: DbUserInsight | null;
+  reason?: string;
+}
+
+export interface CategoryCount {
+  category: string;
+  count: number;
+}
+
+export interface SearchResponse {
+  polls: PollWithCounts[];
+  cursor: string | null;
+  has_more: boolean;
+  category_counts?: CategoryCount[];
+}
+
+export interface ExploreResponse {
+  polls: PollWithCounts[];
+  region?: string | null;
 }
 
 export interface DemographicGroup {
@@ -162,6 +215,10 @@ export interface PublicComment {
   age_range: string | null;
   region_detail: string | null;
   political_lean: number | null;
+  net_score?: number;
+  up_count?: number;
+  down_count?: number;
+  user_opinion_vote?: 1 | -1 | null;
   pending?: boolean;
 }
 

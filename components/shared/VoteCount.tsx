@@ -1,16 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Text, StyleSheet } from 'react-native';
 import { useColors } from '@/constants/colors';
+import { formatVoteCount } from '@/lib/utils';
+export { formatVoteCount };
 
 interface Props {
   total: number;
   velocity?: number;
-}
-
-export function formatVoteCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
 }
 
 export function VoteCount({ total, velocity }: Props) {
@@ -41,7 +37,7 @@ export function VoteCount({ total, velocity }: Props) {
 
 const styles = StyleSheet.create({
   text: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 11,
   },
 });

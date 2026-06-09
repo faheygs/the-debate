@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
   View,
+  Text,
   TouchableOpacity,
   StyleSheet,
   Modal,
@@ -10,12 +11,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { useColors } from '@/constants/colors';
 import { ProgressBar } from '@/components/onboarding/ProgressBar';
 import { useOnboarding } from '@/hooks/useOnboarding';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 
 const COUNTRIES = [
   { code: 'US', name: 'United States' },
@@ -58,10 +56,7 @@ const US_STATES = [
   'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
 ];
 
-const CA_PROVINCES = [
-  'AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT',
-];
-
+const CA_PROVINCES = ['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'];
 const AU_STATES = ['ACT','NSW','NT','QLD','SA','TAS','VIC','WA'];
 
 function getSubregions(countryCode: string): string[] {
@@ -91,7 +86,7 @@ type PickerProps = {
 };
 
 function ListPicker({ visible, items, onSelect, onClose, title }: PickerProps) {
-  const theme = useTheme();
+  const colors = useColors();
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(
@@ -101,25 +96,18 @@ function ListPicker({ visible, items, onSelect, onClose, title }: PickerProps) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <ThemedView style={styles.modal}>
+      <View style={[styles.modal, { backgroundColor: colors.background }]}>
         <SafeAreaView style={styles.modalSafe}>
           <View style={styles.modalHeader}>
-            <ThemedText type="subtitle">{title}</ThemedText>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{title}</Text>
             <TouchableOpacity onPress={onClose}>
-              <ThemedText type="default" themeColor="textSecondary">Done</ThemedText>
+              <Text style={[styles.modalDone, { color: colors.accent }]}>Done</Text>
             </TouchableOpacity>
           </View>
           <TextInput
-            style={[
-              styles.search,
-              {
-                backgroundColor: theme.backgroundElement,
-                color: theme.text,
-                borderColor: theme.backgroundSelected,
-              },
-            ]}
+            style={[styles.search, { backgroundColor: colors.surfaceAlt, color: colors.text, borderColor: colors.border }]}
             placeholder="Search..."
-            placeholderTextColor={theme.textSecondary}
+            placeholderTextColor={colors.textTertiary}
             value={query}
             onChangeText={setQuery}
             autoCapitalize="none"
@@ -131,25 +119,25 @@ function ListPicker({ visible, items, onSelect, onClose, title }: PickerProps) {
               <Pressable
                 style={({ pressed }) => [
                   styles.listItem,
-                  { backgroundColor: pressed ? theme.backgroundElement : 'transparent' },
+                  { backgroundColor: pressed ? colors.surfaceAlt : 'transparent' },
                 ]}
                 onPress={() => { onSelect(item.code); onClose(); setQuery(''); }}
               >
-                <ThemedText type="default">{item.name}</ThemedText>
+                <Text style={[styles.listItemText, { color: colors.text }]}>{item.name}</Text>
               </Pressable>
             )}
             ItemSeparatorComponent={() => (
-              <View style={[styles.separator, { backgroundColor: theme.backgroundElement }]} />
+              <View style={[styles.separator, { backgroundColor: colors.border }]} />
             )}
           />
         </SafeAreaView>
-      </ThemedView>
+      </View>
     </Modal>
   );
 }
 
 export default function RegionScreen() {
-  const theme = useTheme();
+  const colors = useColors();
   const { data, set } = useOnboarding();
   const [country, setCountry] = useState<string>(data.region ?? detectDefaultCountry());
   const [regionDetail, setRegionDetail] = useState<string | null>(data.region_detail ?? null);
@@ -172,52 +160,54 @@ export default function RegionScreen() {
   const canContinue = !subregions.length || regionDetail !== null;
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView style={styles.safe}>
         <ProgressBar current={3} total={7} />
 
         <View style={styles.content}>
-          <ThemedText type="subtitle">Where are you from?</ThemedText>
-          <ThemedText type="default" themeColor="textSecondary">
+          <Text style={[styles.title, { color: colors.text }]}>Where are you from?</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Used to show regional vote breakdowns.
-          </ThemedText>
+          </Text>
         </View>
 
         <View style={styles.selectors}>
           <TouchableOpacity
-            style={[styles.selector, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}
+            style={[styles.selector, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
             onPress={() => setShowCountry(true)}
             activeOpacity={0.75}
           >
-            <ThemedText type="small" themeColor="textSecondary">Country</ThemedText>
-            <ThemedText type="default">{countryName}</ThemedText>
+            <Text style={[styles.selectorLabel, { color: colors.textTertiary }]}>Country</Text>
+            <Text style={[styles.selectorValue, { color: colors.text }]}>{countryName}</Text>
           </TouchableOpacity>
 
           {subregions.length > 0 && (
             <TouchableOpacity
-              style={[styles.selector, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}
+              style={[styles.selector, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
               onPress={() => setShowRegion(true)}
               activeOpacity={0.75}
             >
-              <ThemedText type="small" themeColor="textSecondary">State / Province</ThemedText>
-              <ThemedText type="default">{regionDetail ?? 'Select...'}</ThemedText>
+              <Text style={[styles.selectorLabel, { color: colors.textTertiary }]}>State / Province</Text>
+              <Text style={[styles.selectorValue, { color: regionDetail ? colors.text : colors.textTertiary }]}>
+                {regionDetail ?? 'Select...'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
 
         <View style={styles.footer}>
           <TouchableOpacity
-            style={[styles.button, !canContinue && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: canContinue ? colors.accent : colors.surfaceAlt }]}
             onPress={handleContinue}
             disabled={!canContinue}
             activeOpacity={0.85}
           >
-            <ThemedText style={styles.buttonText}>Continue</ThemedText>
+            <Text style={[styles.buttonText, { color: canContinue ? colors.accentText : colors.textTertiary }]}>
+              Continue
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleSkip} activeOpacity={0.7}>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.skip}>
-              Skip
-            </ThemedText>
+            <Text style={[styles.skip, { color: colors.textSecondary }]}>Skip</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -237,59 +227,45 @@ export default function RegionScreen() {
         onSelect={setRegionDetail}
         onClose={() => setShowRegion(false)}
       />
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safe: { flex: 1, gap: Spacing.four },
-  content: { paddingHorizontal: Spacing.four, gap: Spacing.two },
-  selectors: { paddingHorizontal: Spacing.four, gap: Spacing.three },
-  selector: {
-    padding: Spacing.three,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 4,
-  },
-  footer: {
-    marginTop: 'auto',
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-    gap: Spacing.two,
-    alignItems: 'center',
-  },
-  skip: { textAlign: 'center' },
-  button: {
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'stretch',
-  },
-  buttonDisabled: { opacity: 0.35 },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  safe: { flex: 1, gap: 16 },
+  content: { paddingHorizontal: 16, gap: 8 },
+  title: { fontFamily: 'Inter_600SemiBold', fontSize: 22 },
+  subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15 },
+  selectors: { paddingHorizontal: 16, gap: 12 },
+  selector: { padding: 12, borderRadius: 12, borderWidth: 1, gap: 4 },
+  selectorLabel: { fontFamily: 'Inter_400Regular', fontSize: 11 },
+  selectorValue: { fontFamily: 'Inter_500Medium', fontSize: 15 },
+  footer: { marginTop: 'auto', paddingHorizontal: 16, paddingBottom: 24, gap: 8, alignItems: 'center' },
+  skip: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center' },
+  button: { height: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
+  buttonText: { fontFamily: 'Inter_600SemiBold', fontSize: 16 },
   modal: { flex: 1 },
-  modalSafe: { flex: 1, gap: Spacing.three },
+  modalSafe: { flex: 1, gap: 12 },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
+  modalTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 17 },
+  modalDone: { fontFamily: 'Inter_500Medium', fontSize: 15 },
   search: {
     height: 44,
-    marginHorizontal: Spacing.four,
+    marginHorizontal: 16,
     borderRadius: 10,
-    paddingHorizontal: Spacing.three,
+    paddingHorizontal: 12,
+    fontFamily: 'Inter_400Regular',
     fontSize: 16,
     borderWidth: 1,
   },
-  listItem: {
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
-  },
-  separator: { height: 1, marginHorizontal: Spacing.four },
+  listItem: { paddingHorizontal: 16, paddingVertical: 12 },
+  listItemText: { fontFamily: 'Inter_400Regular', fontSize: 15 },
+  separator: { height: 1, marginHorizontal: 16 },
 });

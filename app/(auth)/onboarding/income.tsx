@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { useColors } from '@/constants/colors';
 import { OptionGrid } from '@/components/onboarding/OptionGrid';
 import { ProgressBar } from '@/components/onboarding/ProgressBar';
 import { useOnboarding } from '@/hooks/useOnboarding';
-import { Spacing } from '@/constants/theme';
 
 const INCOME_OPTIONS = [
   { value: 'under_30k', label: 'Under $30k' },
@@ -19,6 +17,7 @@ const INCOME_OPTIONS = [
 ];
 
 export default function IncomeScreen() {
+  const colors = useColors();
   const { data, set } = useOnboarding();
   const [selected, setSelected] = useState<string | null>(data.income_bracket ?? null);
 
@@ -33,67 +32,49 @@ export default function IncomeScreen() {
   }
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView style={styles.safe}>
         <ProgressBar current={5} total={7} />
 
         <View style={styles.content}>
           <View style={styles.titleRow}>
-            <ThemedText type="subtitle">Income bracket?</ThemedText>
-            <ThemedText type="small" style={styles.optional}>(Optional)</ThemedText>
+            <Text style={[styles.title, { color: colors.text }]}>Income bracket?</Text>
+            <Text style={[styles.optional, { color: colors.textTertiary }]}>(Optional)</Text>
           </View>
-          <ThemedText type="default" themeColor="textSecondary">
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Helps show how income affects opinions.
-          </ThemedText>
+          </Text>
         </View>
 
-        <OptionGrid
-          options={INCOME_OPTIONS}
-          selected={selected}
-          onSelect={setSelected}
-          columns={2}
-        />
+        <OptionGrid options={INCOME_OPTIONS} selected={selected} onSelect={setSelected} columns={2} />
 
         <View style={styles.footer}>
           <TouchableOpacity
-            style={styles.button}
+            style={[styles.button, { backgroundColor: colors.accent }]}
             onPress={handleContinue}
             activeOpacity={0.85}
           >
-            <ThemedText style={styles.buttonText}>Continue</ThemedText>
+            <Text style={[styles.buttonText, { color: colors.accentText }]}>Continue</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleSkip} activeOpacity={0.7}>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.skip}>
-              Skip
-            </ThemedText>
+            <Text style={[styles.skip, { color: colors.textSecondary }]}>Skip</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safe: { flex: 1, gap: Spacing.four },
-  content: { paddingHorizontal: Spacing.four, gap: Spacing.two },
-  titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.two },
-  optional: { color: '#208AEF' },
-  footer: {
-    marginTop: 'auto',
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-    gap: Spacing.two,
-    alignItems: 'center',
-  },
-  button: {
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'stretch',
-  },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  skip: { textAlign: 'center' },
+  safe: { flex: 1, gap: 16 },
+  content: { paddingHorizontal: 16, gap: 8 },
+  titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  title: { fontFamily: 'Inter_600SemiBold', fontSize: 22 },
+  optional: { fontFamily: 'Inter_400Regular', fontSize: 13 },
+  subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15 },
+  footer: { marginTop: 'auto', paddingHorizontal: 16, paddingBottom: 24, gap: 8, alignItems: 'center' },
+  button: { height: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
+  buttonText: { fontFamily: 'Inter_600SemiBold', fontSize: 16 },
+  skip: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center' },
 });

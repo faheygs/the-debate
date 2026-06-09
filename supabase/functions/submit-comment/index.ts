@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Redis } from "npm:@upstash/redis";
+import { getAuthenticatedUser } from "../_shared/auth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -19,7 +20,7 @@ Deno.serve(async (req) => {
   const start = Date.now();
 
   try {
-    // ── Auth ──────────────────────────────────────────────────────────────
+    // ── Auth (JWT cache) ──────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
@@ -28,11 +29,12 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
+    const authResult = await getAuthenticatedUser(
       authHeader.replace("Bearer ", ""),
+      supabase,
     );
-    if (authError || !user) return json({ error: "Unauthorized" }, 401);
-    const userId = user.id;
+    if (!authResult) return json({ error: "Unauthorized" }, 401);
+    const userId = authResult.userId;
 
     // ── Parse body ────────────────────────────────────────────────────────
     const { poll_id, content } = await req.json();

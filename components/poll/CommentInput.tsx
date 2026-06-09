@@ -1,11 +1,5 @@
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-} from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/constants/colors';
 import { submitComment } from '@/lib/api';
@@ -38,7 +32,6 @@ export function CommentInput({
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
 
-  // Hidden once commented — "Your voice" card is shown above the Voices list
   if (hasCommented) return null;
 
   function handleSubmit() {
@@ -56,17 +49,15 @@ export function CommentInput({
       pending: true,
     };
 
-    // Show comment instantly, close input
     onOptimisticComment(optimistic);
     setText('');
 
-    // Fire API in background — no await before display
     submitComment(pollId, trimmed).then((result) => {
       if (result.approved && result.comment) {
         onConfirmComment(tempId, result.comment as PublicComment);
       } else {
         onRemoveComment(tempId);
-        const msg = 'Your voice was blocked. Keep it on topic and respectful.';
+        const msg = 'Your opinion was blocked. Keep it on topic and respectful.';
         onBlocked ? onBlocked(msg) : onError(msg);
       }
     }).catch((err: unknown) => {
@@ -75,8 +66,8 @@ export function CommentInput({
     });
   }
 
-  const remaining = MAX_CHARS - text.length;
-  const overLimit = remaining < 0;
+  const charCount = text.length;
+  const overLimit = charCount > MAX_CHARS;
   const canSubmit = text.trim().length > 0 && !overLimit;
 
   return (
@@ -84,53 +75,51 @@ export function CommentInput({
       style={[
         styles.container,
         {
-          backgroundColor: colors.background,
+          backgroundColor: colors.surfaceAlt,
           borderTopColor: colors.border,
           paddingBottom: Math.max(insets.bottom, 12),
         },
       ]}
     >
-      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <TextInput
-          style={[styles.input, { color: colors.text }]}
-          placeholder="Add your voice… one shot, make it count"
-          placeholderTextColor={colors.textTertiary}
-          value={text}
-          onChangeText={setText}
-          multiline
-          maxLength={MAX_CHARS + 20}
-          returnKeyType="default"
-          blurOnSubmit={false}
-        />
-        <View style={styles.inputFooter}>
-          <Text
-            style={[
-              styles.charCount,
-              {
-                color: overLimit
-                  ? colors.disagree
-                  : remaining <= 20
-                  ? colors.trending
-                  : colors.textTertiary,
-              },
-            ]}
-          >
-            {remaining}
+      <TextInput
+        style={[styles.input, { color: colors.text }]}
+        placeholder="Share your opinion..."
+        placeholderTextColor={colors.textTertiary}
+        value={text}
+        onChangeText={setText}
+        multiline
+        maxLength={MAX_CHARS + 20}
+        returnKeyType="default"
+        blurOnSubmit={false}
+      />
+      <View style={styles.footer}>
+        <Text
+          style={[
+            styles.charCount,
+            {
+              color: overLimit
+                ? colors.accent
+                : charCount >= MAX_CHARS - 20
+                ? colors.accentDark
+                : colors.textTertiary,
+            },
+          ]}
+        >
+          {charCount}/150
+        </Text>
+        <TouchableOpacity
+          style={[
+            styles.submitBtn,
+            { backgroundColor: canSubmit ? colors.accent : colors.border },
+          ]}
+          onPress={handleSubmit}
+          disabled={!canSubmit}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.submitText, { color: canSubmit ? colors.accentText : colors.textTertiary }]}>
+            Post
           </Text>
-          <TouchableOpacity
-            style={[
-              styles.submitBtn,
-              { backgroundColor: canSubmit ? colors.primary : colors.surfaceAlt },
-            ]}
-            onPress={handleSubmit}
-            disabled={!canSubmit}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.submitText, { color: canSubmit ? '#fff' : colors.textTertiary }]}>
-              Post
-            </Text>
-          </TouchableOpacity>
-        </View>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -141,30 +130,23 @@ const styles = StyleSheet.create({
     borderTopWidth: 0.5,
     paddingHorizontal: 16,
     paddingTop: 10,
-  },
-  inputRow: {
-    borderRadius: 12,
-    borderWidth: 0.5,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 6,
-    gap: 6,
+    gap: 8,
   },
   input: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 14,
     lineHeight: 20,
     maxHeight: 80,
     minHeight: 20,
   },
-  inputFooter: {
+  footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 8,
   },
   charCount: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 12,
   },
   submitBtn: {
@@ -176,7 +158,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   submitText: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 13,
   },
 });

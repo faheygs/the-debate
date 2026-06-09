@@ -869,12 +869,45 @@ const { data, fetchNextPage } = useInfiniteQuery({
 SUBMITTED
    ↓ (community upvotes OR admin approval)
    ↓ threshold: 10 upvotes OR manual promote
-LIVE (48 hours default)
+LIVE (configurable expiry — 30 days default for auto-approved polls)
    ↓ expires_at reached
 CLOSED → archived, results permanent, searchable
 
-Evergreen polls → CLOSED → re-queued after 90 days → LIVE again
+Evergreen polls (is_evergreen = true) → expires_at = NULL → never expire
+Evergreen CLOSED → re-queued after 90 days → LIVE again
 ```
+
+### Poll Expiry Rules
+
+- **Auto-approved polls** (submit-poll with auto-approve): `expires_at = NOW() + 30 days`
+- **Future**: admin can set a custom duration per poll (shorter for news, longer for hypotheticals)
+- **Evergreen polls**: `expires_at = NULL` — always live, never expire
+- **Expired polls**: `status → 'closed'` (set by a scheduled job or on-demand check), no new votes accepted
+
+### cast-vote Expiry Check
+
+The `cast-vote` Edge Function enforces expiry at vote time, preventing votes on polls that have
+passed their `expires_at` even if the status has not yet been updated to `'closed'`:
+
+```typescript
+// In cast-vote Edge Function — runs in parallel with Redis duplicate check
+const [alreadyVoted, pollRow] = await Promise.all([
+  redis.get(`user:${userId}:voted:${poll_id}`),
+  supabase.from('polls').select('status, expires_at').eq('id', poll_id).maybeSingle(),
+]);
+
+if (!pollRow.data || pollRow.data.status !== 'live') {
+  return json({ error: 'Poll not found or not live' }, 404);
+}
+if (pollRow.data.expires_at && new Date(pollRow.data.expires_at) < new Date()) {
+  return json({ error: 'This debate has closed' }, 409);
+}
+```
+
+### Closing Soon Discovery
+
+Polls within 7 days of expiry surface in the "Closing Soon" section of the Explore screen.
+The `search` Edge Function accepts `?sort=closing` to return polls ordered by `expires_at ASC`.
 
 ### Poll Detail Page Sections
 

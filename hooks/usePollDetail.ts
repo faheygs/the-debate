@@ -1,44 +1,32 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/hooks/useAuth';
 import { fetchPoll } from '@/lib/api';
 import { subscribeToPollComments } from '@/lib/realtime';
 import type { PollDetailResponse, PublicComment } from '@/types/database';
 
 export function usePollDetail(pollId: string) {
-  const [data, setData] = useState<PollDetailResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const queryClient = useQueryClient();
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await fetchPoll(pollId);
-      if (mountedRef.current) setData(result);
-    } catch (err: unknown) {
-      if (mountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Failed to load poll');
-      }
-    } finally {
-      if (mountedRef.current) setLoading(false);
-    }
-  }, [pollId]);
+  const queryKey = ['poll', pollId, userId] as const;
+  const queryKeyRef = useRef(queryKey);
+  queryKeyRef.current = queryKey;
 
-  useEffect(() => {
-    mountedRef.current = true;
-    load();
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [load]);
+  const query = useQuery<PollDetailResponse, Error>({
+    queryKey,
+    queryFn: () => fetchPoll(pollId),
+    staleTime: 5 * 60 * 1000,
+    enabled: !!pollId,
+  });
 
-  // Realtime: new comments from other users (or Realtime winning the race on submit)
+  // Realtime: new comments from other users
   useEffect(() => {
     const unsub = subscribeToPollComments(pollId, ({ comment }) => {
-      setData((prev) => {
+      queryClient.setQueryData(queryKeyRef.current, (prev: PollDetailResponse | undefined) => {
         if (!prev) return prev;
-        // Deduplicate by real ID — covers both Realtime-first and confirm-first races
-        if (prev.comments.some((c) => c.id === comment.id)) return prev;
+        if (prev.comments.some(c => c.id === comment.id)) return prev;
         const newComment: PublicComment = {
           id: comment.id,
           content: comment.content,
@@ -50,82 +38,79 @@ export function usePollDetail(pollId: string) {
         return { ...prev, comments: [newComment, ...prev.comments] };
       });
     });
-    return () => {
-      unsub();
-    };
-  }, [pollId]);
+    return unsub;
+  }, [pollId, queryClient]);
 
-  const updateCounts = useCallback(
-    (yes: number, no: number, total: number, userVote: 1 | -1) => {
-      setData((prev) =>
-        prev
-          ? { ...prev, yes_count: yes, no_count: no, total_count: total, user_vote: userVote }
-          : prev,
-      );
-    },
-    [],
-  );
+  const updateCounts = useCallback((yes: number, no: number, total: number, userVote: 1 | -1) => {
+    queryClient.setQueryData(queryKeyRef.current, (prev: PollDetailResponse | undefined) =>
+      prev ? { ...prev, yes_count: yes, no_count: no, total_count: total, user_vote: userVote } : prev
+    );
+  }, [queryClient]);
 
-  // Optimistic: immediately add a pending comment and flip has_commented
   const addOptimisticComment = useCallback((comment: PublicComment) => {
-    setData((prev) => {
+    queryClient.setQueryData(queryKeyRef.current, (prev: PollDetailResponse | undefined) => {
       if (!prev) return prev;
-      return {
-        ...prev,
-        comments: [comment, ...prev.comments],
-        has_commented: true,
-        user_comment: comment.content,
-      };
+      return { ...prev, comments: [comment, ...prev.comments], has_commented: true, user_comment: comment.content };
     });
-  }, []);
+  }, [queryClient]);
 
-  // Confirm: swap the temp ID for the real comment in-place
   const confirmComment = useCallback((tempId: string, realComment: PublicComment) => {
-    setData((prev) => {
+    queryClient.setQueryData(queryKeyRef.current, (prev: PollDetailResponse | undefined) => {
       if (!prev) return prev;
-      // If Realtime already added the real comment, just drop the temp
-      const realtimeAlreadyAdded = prev.comments.some(
-        (c) => c.id === realComment.id && c.id !== tempId,
-      );
+      // Realtime may have already added the real comment — just drop the temp entry
+      const realtimeAlreadyAdded = prev.comments.some(c => c.id === realComment.id && c.id !== tempId);
       if (realtimeAlreadyAdded) {
-        return {
-          ...prev,
-          comments: prev.comments.filter((c) => c.id !== tempId),
-          user_comment: realComment.content,
-        };
+        return { ...prev, comments: prev.comments.filter(c => c.id !== tempId), user_comment: realComment.content };
       }
-      // Replace temp entry with the confirmed comment (remove pending flag)
       return {
         ...prev,
-        comments: prev.comments.map((c) =>
-          c.id === tempId ? { ...realComment, pending: false } : c,
-        ),
+        comments: prev.comments.map(c => c.id === tempId ? { ...realComment, pending: false } : c),
         user_comment: realComment.content,
       };
     });
-  }, []);
+  }, [queryClient]);
 
-  // Remove: drop a failed/blocked optimistic comment and reset commented state
   const removeComment = useCallback((tempId: string) => {
-    setData((prev) => {
+    queryClient.setQueryData(queryKeyRef.current, (prev: PollDetailResponse | undefined) => {
       if (!prev) return prev;
       return {
         ...prev,
-        comments: prev.comments.filter((c) => c.id !== tempId),
+        comments: prev.comments.filter(c => c.id !== tempId),
         has_commented: false,
         user_comment: null,
       };
     });
-  }, []);
+  }, [queryClient]);
+
+  const updateOpinionVote = useCallback((
+    commentId: string,
+    value: 1 | -1 | null,
+    netScore: number,
+    upCount: number,
+    downCount: number,
+  ) => {
+    queryClient.setQueryData(queryKeyRef.current, (prev: PollDetailResponse | undefined) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        comments: prev.comments.map(c =>
+          c.id === commentId
+            ? { ...c, net_score: netScore, user_opinion_vote: value, up_count: upCount, down_count: downCount }
+            : c
+        ),
+      };
+    });
+  }, [queryClient]);
 
   return {
-    data,
-    loading,
-    error,
+    data: query.data ?? null,
+    loading: query.isLoading,
+    error: query.error ? String(query.error) : null,
     updateCounts,
     addOptimisticComment,
     confirmComment,
     removeComment,
-    refetch: load,
+    updateOpinionVote,
+    refetch: query.refetch,
   };
 }

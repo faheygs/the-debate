@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Redis } from "npm:@upstash/redis";
+import { getAuthenticatedUser } from "../_shared/auth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -16,7 +17,7 @@ Deno.serve(async (req) => {
   const start = Date.now();
 
   try {
-    // ── Auth ──────────────────────────────────────────────────────────────
+    // ── Auth (JWT cache) ──────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
@@ -25,11 +26,12 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
+    const authResult = await getAuthenticatedUser(
       authHeader.replace("Bearer ", ""),
+      supabase,
     );
-    if (authError || !user) return json({ error: "Unauthorized" }, 401);
-    const userId = user.id;
+    if (!authResult) return json({ error: "Unauthorized" }, 401);
+    const userId = authResult.userId;
 
     // ── Validate body ─────────────────────────────────────────────────────
     const body = await req.json() as { poll_id?: string; value?: number };
@@ -43,13 +45,28 @@ Deno.serve(async (req) => {
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
     });
 
-    // ── Duplicate-vote gate ───────────────────────────────────────────────
+    // ── Parallel: duplicate-vote gate + poll validity check ───────────────
     const voteKey = `user:${userId}:voted:${poll_id}`;
-    const alreadyVoted = await redis.get(voteKey);
+    const [alreadyVoted, pollRow] = await Promise.all([
+      redis.get(voteKey),
+      supabase
+        .from("polls")
+        .select("status, expires_at")
+        .eq("id", poll_id)
+        .maybeSingle(),
+    ]);
+
     if (alreadyVoted) return json({ error: "Already voted on this poll" }, 409);
 
+    const poll = pollRow.data;
+    if (!poll || poll.status !== "live") {
+      return json({ error: "Poll not found or not live" }, 404);
+    }
+    if (poll.expires_at && new Date(poll.expires_at) < new Date()) {
+      return json({ error: "This debate has closed" }, 409);
+    }
+
     // ── Parallel Redis counter update + voted flag ────────────────────────
-    // incr the voted side, get the other, incr total, set voted flag — all at once
     const [yesRaw, noRaw, totalRaw] = await Promise.all([
       value === 1
         ? redis.incr(`poll:${poll_id}:yes`)
@@ -73,6 +90,29 @@ Deno.serve(async (req) => {
       event: "vote_update",
       payload: { yes: yesCount, no: noCount, total },
     });
+
+    // ── New Trending notification at 10k votes (fire-and-forget) ─────────
+    const TRENDING_THRESHOLD = 10_000;
+    const justCrossed10k = total >= TRENDING_THRESHOLD && (total - 1) < TRENDING_THRESHOLD;
+    if (justCrossed10k) {
+      const notifyKey = `poll:${poll_id}:notified_trending`;
+      redis.set(notifyKey, '1', { nx: true, ex: 86400 }).then(async (set) => {
+        if (!set) return; // already sent
+        const { data: allUsers } = await supabase
+          .from('users')
+          .select('expo_push_token')
+          .not('expo_push_token', 'is', null)
+          .limit(1000);
+        const tokens = (allUsers ?? []).map(u => u.expo_push_token).filter(Boolean);
+        if (tokens.length > 0) {
+          fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-notification`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+            body: JSON.stringify({ tokens, body: 'This debate is blowing up right now', data: { type: 'new_trending', poll_id } }),
+          });
+        }
+      }).catch(() => {});
+    }
 
     // ── DB writes fire-and-forget (background, don't await) ──────────────
     Promise.allSettled([

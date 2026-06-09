@@ -1,109 +1,230 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/constants/colors';
+import { pluralize, getStateName } from '@/lib/utils';
 import type { PublicComment } from '@/types/database';
+
+const AMBER = '#C8762A';
+const ROSE = '#E57373';
 
 interface Props {
   comments: PublicComment[];
+  opinionCount: number;
+  onOpinionVote?: (commentId: string, value: 1 | -1) => void;
   onError?: (msg: string) => void;
 }
 
-export function CommentSection({ comments }: Props) {
+export function CommentSection({ comments, opinionCount, onOpinionVote }: Props) {
   const colors = useColors();
-
-  if (comments.length === 0) {
-    return (
-      <View style={styles.empty}>
-        <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
-          No voices yet. Be the first.
-        </Text>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.heading, { color: colors.text }]}>Voices</Text>
-      {comments.map((c) => (
-        <CommentCard key={c.id} comment={c} />
-      ))}
+      <View style={styles.headingRow}>
+        <Text style={[styles.heading, { color: colors.text }]}>Opinions</Text>
+        <Text style={[styles.headingCount, { color: colors.textTertiary }]}>
+          {pluralize(opinionCount, 'opinion')}
+        </Text>
+      </View>
+
+      {comments.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
+            No opinions yet. Be the first.
+          </Text>
+        </View>
+      ) : (
+        comments.map((c) => (
+          <CommentCard key={c.id} comment={c} onOpinionVote={onOpinionVote} />
+        ))
+      )}
     </View>
   );
 }
 
-function CommentCard({ comment }: { comment: PublicComment }) {
+function CommentCard({
+  comment,
+  onOpinionVote,
+}: {
+  comment: PublicComment;
+  onOpinionVote?: (commentId: string, value: 1 | -1) => void;
+}) {
   const colors = useColors();
-  const attribution = formatAttribution(comment.age_range, comment.region_detail, comment.political_lean);
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const attribution = formatAttribution(comment.age_range, comment.region_detail);
+  const upCount = comment.up_count ?? 0;
+  const downCount = comment.down_count ?? 0;
+  const userVote = comment.user_opinion_vote ?? null;
+
+  const upActive = userVote === 1;
+  const downActive = userVote === -1;
+
+  const cardBg = isDark ? '#161616' : '#FAFAFA';
+  const cardBorder = isDark ? '#252525' : '#EBEBEB';
+  const contentColor = isDark ? '#E8E8E8' : '#1A1A1A';
+
+  const upBg = isDark ? '#1E1208' : '#FDF3E7';
+  const downBg = isDark ? '#1F1010' : '#FFF0F0';
+
+  const defaultPillBg = isDark ? '#1E1E1E' : colors.surfaceAlt;
+  const defaultPillBorder = isDark ? '#2A2A2A' : colors.borderMid;
+  const defaultPillColor = isDark ? '#555555' : colors.textTertiary;
 
   return (
     <View
       style={[
         styles.card,
-        { backgroundColor: colors.surface, borderColor: colors.border },
+        { backgroundColor: cardBg, borderColor: cardBorder },
         comment.pending && styles.cardPending,
       ]}
     >
-      <Text style={[styles.content, { color: colors.text }]}>{comment.content}</Text>
-      {comment.pending ? (
-        <Text style={[styles.attribution, { color: colors.textTertiary }]}>Posting…</Text>
-      ) : attribution ? (
-        <Text style={[styles.attribution, { color: colors.textTertiary }]}>— {attribution}</Text>
-      ) : null}
+      <View style={styles.amberLine} />
+
+      <Text style={[styles.content, { color: contentColor }]}>{comment.content}</Text>
+
+      <View style={styles.cardFooter}>
+        {comment.pending ? (
+          <Text style={[styles.attribution, { color: '#888888' }]}>Posting…</Text>
+        ) : attribution ? (
+          <Text style={[styles.attribution, { color: '#888888' }]}>{attribution}</Text>
+        ) : (
+          <View style={styles.attributionSpacer} />
+        )}
+
+        {!comment.pending && (
+          <View style={styles.pillRow}>
+            <TouchableOpacity
+              style={[
+                styles.pill,
+                {
+                  backgroundColor: upActive ? upBg : defaultPillBg,
+                  borderColor: upActive ? AMBER : defaultPillBorder,
+                },
+              ]}
+              onPress={() => onOpinionVote?.(comment.id, 1)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={upActive ? 'thumbs-up' : 'thumbs-up-outline'}
+                size={12}
+                color={upActive ? AMBER : defaultPillColor}
+              />
+              <Text style={[styles.pillCount, { color: upActive ? AMBER : defaultPillColor }]}>
+                {upCount}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.pill,
+                {
+                  backgroundColor: downActive ? downBg : defaultPillBg,
+                  borderColor: downActive ? ROSE : defaultPillBorder,
+                },
+              ]}
+              onPress={() => onOpinionVote?.(comment.id, -1)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={downActive ? 'thumbs-down' : 'thumbs-down-outline'}
+                size={12}
+                color={downActive ? ROSE : defaultPillColor}
+              />
+              <Text style={[styles.pillCount, { color: downActive ? ROSE : defaultPillColor }]}>
+                {downCount}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
 
-function formatAttribution(
-  age_range: string | null,
-  region_detail: string | null,
-  political_lean: number | null,
-): string {
+function formatAttribution(age_range: string | null, region_detail: string | null): string {
   const parts: string[] = [];
   if (age_range) parts.push(age_range);
-  if (region_detail) parts.push(region_detail);
-  if (political_lean !== null) parts.push(politicalLabel(political_lean));
+  if (region_detail) parts.push(getStateName(region_detail));
   return parts.join(' · ');
 }
 
-function politicalLabel(lean: number): string {
-  if (lean <= -2) return 'Very Liberal';
-  if (lean === -1) return 'Liberal';
-  if (lean === 0) return 'Moderate';
-  if (lean === 1) return 'Conservative';
-  return 'Very Conservative';
-}
-
 const styles = StyleSheet.create({
-  container: { gap: 8 },
+  container: { gap: 0 },
+  headingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
   heading: {
-    fontFamily: 'Syne_700Bold',
-    fontSize: 18,
-    marginBottom: 2,
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 15,
+  },
+  headingCount: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
   },
   empty: {
     paddingVertical: 16,
     alignItems: 'center',
   },
   emptyText: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 14,
   },
   card: {
-    borderRadius: 10,
-    borderWidth: 0.5,
-    padding: 12,
-    gap: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 14,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  amberLine: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(200, 118, 42, 0.15)',
   },
   cardPending: {
     opacity: 0.6,
   },
   content: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 23,
+    marginBottom: 14,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   attribution: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 11,
-    lineHeight: 16,
+    flex: 1,
+  },
+  attributionSpacer: { flex: 1 },
+  pillRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 99,
+    borderWidth: 1,
+    minHeight: 28,
+  },
+  pillCount: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
   },
 });

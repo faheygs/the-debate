@@ -11,10 +11,12 @@ import { upvotePoll, fetchSinglePoll } from '@/lib/api';
 import { FeedList } from '@/components/feed/FeedList';
 import { FeedModeTabs } from '@/components/feed/FeedModeTabs';
 import { Toast } from '@/components/shared/Toast';
+import type { FeedFilter } from '@/hooks/useFeed';
 
 export default function FeedScreen() {
   const colors = useColors();
-  const feed = useFeed();
+  const [filter, setFilter] = useState<FeedFilter>('all');
+  const feed = useFeed(filter);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' | 'info' } | null>(null);
 
   const showToast = useCallback((message: string, variant: 'error' | 'info' | 'success' = 'error') => {
@@ -23,13 +25,6 @@ export default function FeedScreen() {
 
   const { getUserVote, vote, initVote } = useVote(feed.updatePollCounts, showToast);
 
-  // Load feed on mount
-  useEffect(() => {
-    feed.initialLoad();
-  }, []);
-
-  // Hydrate voted state from server-returned user_vote on every page load/refresh.
-  // initVote is idempotent — skips polls already in the voted map.
   useEffect(() => {
     for (const poll of feed.polls) {
       if (poll.user_vote != null) {
@@ -38,21 +33,15 @@ export default function FeedScreen() {
     }
   }, [feed.polls]);
 
-  // Realtime feed:global subscription
   useEffect(() => {
     const unsub = subscribeToFeed((delta) => {
-      // Fetch and prepend each new poll_id — no full reload needed
       if (delta.new && delta.new.length > 0) {
         for (const pollId of delta.new) {
           fetchSinglePoll(pollId)
             .then(poll => feed.prependPoll(poll))
-            .catch(() => {
-              // Fallback: full refresh if fetch fails
-              feed.refresh();
-            });
+            .catch(() => feed.refresh());
         }
       }
-      // Update counts for any polls in the current list
       if (delta.counts) {
         for (const [pollId, counts] of Object.entries(delta.counts)) {
           feed.updatePollCounts(pollId, counts.yes, counts.no, counts.total);
@@ -68,20 +57,20 @@ export default function FeedScreen() {
     await vote(pollId, value, poll.yes_count, poll.no_count, poll.total_count);
   }, [feed.polls, vote]);
 
+  const handleTagPress = useCallback((tag: string) => {
+    setFilter(`tag:${tag}`);
+  }, []);
+
   const handleUpvote = useCallback((pollId: string) => {
     const poll = feed.polls.find(p => p.id === pollId);
     if (!poll) return;
-    // Optimistic: increment count, mark as upvoted
     const newCount = (poll.upvote_count ?? 0) + 1;
     feed.updatePollUpvote(pollId, newCount, true);
 
     upvotePoll(pollId).then((result) => {
       feed.updatePollUpvote(pollId, result.upvote_count, true);
-      if (result.promoted) {
-        feed.refresh();
-      }
+      if (result.promoted) feed.refresh();
     }).catch(() => {
-      // Revert optimistic update
       feed.updatePollUpvote(pollId, poll.upvote_count ?? 0, false);
       showToast('Failed to upvote. Please try again.', 'error');
     });
@@ -90,7 +79,6 @@ export default function FeedScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView edges={['top']} style={styles.safe}>
-        {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <Text style={[styles.appName, { color: colors.text }]}>The Debate</Text>
           <TouchableOpacity
@@ -101,25 +89,26 @@ export default function FeedScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Mode tabs */}
-        <FeedModeTabs active={feed.mode} onSelect={feed.switchMode} />
+        <FeedModeTabs active={filter} onSelect={setFilter} />
 
-        {/* Feed */}
         <FeedList
           polls={feed.polls}
           loading={feed.loading}
           refreshing={feed.refreshing}
           hasMore={feed.hasMore}
+          error={feed.error}
+          loadMoreError={feed.loadMoreError}
           getUserVote={getUserVote}
           onVote={handleVote}
           onUpvote={handleUpvote}
+          onTagPress={handleTagPress}
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
+          onRetry={feed.refresh}
           onCountsUpdate={feed.updatePollCounts}
         />
       </SafeAreaView>
 
-      {/* Toast */}
       {toast && (
         <Toast
           message={toast.message}
@@ -144,7 +133,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
   },
   appName: {
-    fontFamily: 'Syne_700Bold',
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 24,
   },
 });

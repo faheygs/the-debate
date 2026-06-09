@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { useColors } from '@/constants/colors';
 import { OptionGrid } from '@/components/onboarding/OptionGrid';
 import { ProgressBar } from '@/components/onboarding/ProgressBar';
 import { useOnboarding } from '@/hooks/useOnboarding';
-import { Spacing } from '@/constants/theme';
 
 const GENDER_OPTIONS = [
   { value: 'male', label: 'Male' },
@@ -17,6 +15,7 @@ const GENDER_OPTIONS = [
 ];
 
 export default function GenderScreen() {
+  const colors = useColors();
   const { data, set } = useOnboarding();
   const [selected, setSelected] = useState<string | null>(
     data.gender !== undefined ? (data.gender === null ? 'prefer_not' : data.gender) : null,
@@ -24,61 +23,48 @@ export default function GenderScreen() {
 
   function handleContinue() {
     if (!selected) return;
-    // 'prefer_not' stores null — user chose to skip this field
     set({ gender: selected === 'prefer_not' ? null : selected });
     router.push('/(auth)/onboarding/region');
   }
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView style={styles.safe}>
         <ProgressBar current={2} total={7} />
 
         <View style={styles.content}>
-          <ThemedText type="subtitle">How do you identify?</ThemedText>
-          <ThemedText type="default" themeColor="textSecondary">
+          <Text style={[styles.title, { color: colors.text }]}>How do you identify?</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Used to show gender breakdowns in poll results.
-          </ThemedText>
+          </Text>
         </View>
 
-        <OptionGrid
-          options={GENDER_OPTIONS}
-          selected={selected}
-          onSelect={setSelected}
-          columns={2}
-        />
+        <OptionGrid options={GENDER_OPTIONS} selected={selected} onSelect={setSelected} columns={2} />
 
         <View style={styles.footer}>
           <TouchableOpacity
-            style={[styles.button, !selected && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: selected ? colors.accent : colors.surfaceAlt }]}
             onPress={handleContinue}
             disabled={!selected}
             activeOpacity={0.85}
           >
-            <ThemedText style={styles.buttonText}>Continue</ThemedText>
+            <Text style={[styles.buttonText, { color: selected ? colors.accentText : colors.textTertiary }]}>
+              Continue
+            </Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safe: { flex: 1, gap: Spacing.four },
-  content: { paddingHorizontal: Spacing.four, gap: Spacing.two },
-  footer: {
-    marginTop: 'auto',
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-  },
-  button: {
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonDisabled: { opacity: 0.35 },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  safe: { flex: 1, gap: 16 },
+  content: { paddingHorizontal: 16, gap: 8 },
+  title: { fontFamily: 'Inter_600SemiBold', fontSize: 22 },
+  subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15 },
+  footer: { marginTop: 'auto', paddingHorizontal: 16, paddingBottom: 24 },
+  button: { height: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  buttonText: { fontFamily: 'Inter_600SemiBold', fontSize: 16 },
 });

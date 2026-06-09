@@ -1,7 +1,5 @@
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
-import { ThemedText } from '@/components/themed-text';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useColors } from '@/constants/colors';
-import { Spacing } from '@/constants/theme';
 import type { PollType } from '@/types/app';
 
 type Props = {
@@ -16,8 +14,8 @@ type Props = {
 export function VoteButtons({ pollType, optionA, optionB, userVote, onVote, disabled }: Props) {
   const colors = useColors();
 
-  const labelA = pollType === 'versus' && optionA ? optionA.toUpperCase() : 'AGREE';
-  const labelB = pollType === 'versus' && optionB ? optionB.toUpperCase() : 'DISAGREE';
+  const labelA = pollType === 'versus' && optionA ? optionA : 'Agree';
+  const labelB = pollType === 'versus' && optionB ? optionB : 'Disagree';
 
   const votedA = userVote === 1;
   const votedB = userVote === -1;
@@ -28,47 +26,49 @@ export function VoteButtons({ pollType, optionA, optionB, userVote, onVote, disa
       <TouchableOpacity
         style={[
           styles.btn,
-          {
-            backgroundColor: votedA ? colors.agree : colors.agreeLight,
-            borderColor: votedA ? colors.agree : colors.agreeBorder,
-          },
-          voted && !votedA && styles.btnDimmed,
+          { backgroundColor: colors.surfaceAlt, borderColor: colors.border },
+          votedA && { backgroundColor: colors.accent, borderColor: colors.accent },
+          voted && !votedA && { backgroundColor: colors.slateVote, borderColor: colors.slateVoteBorder },
         ]}
         onPress={() => onVote(1)}
         disabled={disabled || voted}
         activeOpacity={0.8}
       >
-        <ThemedText
+        <Text
           style={[
             styles.label,
-            { color: votedA ? '#fff' : colors.agreeText },
+            { color: colors.textSecondary },
+            votedA && { color: colors.accentText, fontFamily: 'Inter_600SemiBold' },
+            voted && !votedA && { color: colors.slateVoteText },
           ]}
+          numberOfLines={1}
         >
           {labelA}
-        </ThemedText>
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={[
           styles.btn,
-          {
-            backgroundColor: votedB ? colors.disagree : colors.disagreeLight,
-            borderColor: votedB ? colors.disagree : colors.disagreeBorder,
-          },
-          voted && !votedB && styles.btnDimmed,
+          { backgroundColor: colors.surfaceAlt, borderColor: colors.border },
+          votedB && { backgroundColor: colors.accent, borderColor: colors.accent },
+          voted && !votedB && { backgroundColor: colors.slateVote, borderColor: colors.slateVoteBorder },
         ]}
         onPress={() => onVote(-1)}
         disabled={disabled || voted}
         activeOpacity={0.8}
       >
-        <ThemedText
+        <Text
           style={[
             styles.label,
-            { color: votedB ? '#fff' : colors.disagreeText },
+            { color: colors.textSecondary },
+            votedB && { color: colors.accentText, fontFamily: 'Inter_600SemiBold' },
+            voted && !votedB && { color: colors.slateVoteText },
           ]}
+          numberOfLines={1}
         >
           {labelB}
-        </ThemedText>
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -77,21 +77,19 @@ export function VoteButtons({ pollType, optionA, optionB, userVote, onVote, disa
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    gap: Spacing.two,
+    gap: 8,
   },
   btn: {
     flex: 1,
     height: 44,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.two,
+    paddingHorizontal: 12,
   },
-  btnDimmed: { opacity: 0.4 },
   label: {
+    fontFamily: 'Inter_500Medium',
     fontSize: 13,
-    fontWeight: '500',
-    letterSpacing: 0.3,
   },
 });

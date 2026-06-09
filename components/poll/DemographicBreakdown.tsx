@@ -15,41 +15,17 @@ export function DemographicBreakdown({ breakdown, userDemographics, visible }: P
 
   useEffect(() => {
     if (visible) {
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 400,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
     }
   }, [visible, fadeAnim]);
 
   if (!visible) return null;
 
   const rows: { label: string; data: DemographicBreakdownGroup | null }[] = [
-    {
-      label: 'Your age group',
-      data: userDemographics.age_group
-        ? (breakdown.age[userDemographics.age_group] ?? null)
-        : null,
-    },
-    {
-      label: 'Your region',
-      data: userDemographics.region
-        ? (breakdown.region[userDemographics.region] ?? null)
-        : null,
-    },
-    {
-      label: 'Political lean',
-      data: userDemographics.politics_label
-        ? (breakdown.politics[userDemographics.politics_label] ?? null)
-        : null,
-    },
-    {
-      label: 'Your gender',
-      data: userDemographics.gender
-        ? (breakdown.gender[userDemographics.gender] ?? null)
-        : null,
-    },
+    { label: 'Your age group', data: userDemographics.age_group ? (breakdown.age[userDemographics.age_group] ?? null) : null },
+    { label: 'Your region', data: userDemographics.region ? (breakdown.region[userDemographics.region] ?? null) : null },
+    { label: 'Political lean', data: userDemographics.politics_label ? (breakdown.politics[userDemographics.politics_label] ?? null) : null },
+    { label: 'Your gender', data: userDemographics.gender ? (breakdown.gender[userDemographics.gender] ?? null) : null },
   ];
 
   return (
@@ -62,15 +38,7 @@ export function DemographicBreakdown({ breakdown, userDemographics, visible }: P
   );
 }
 
-function BreakdownRow({
-  label,
-  data,
-  colors,
-}: {
-  label: string;
-  data: DemographicBreakdownGroup | null;
-  colors: ReturnType<typeof useColors>;
-}) {
+function BreakdownRow({ label, data, colors }: { label: string; data: DemographicBreakdownGroup | null; colors: ReturnType<typeof useColors> }) {
   const MIN_VOTES = 5;
   const hasData = data !== null && data.total >= MIN_VOTES;
 
@@ -80,15 +48,10 @@ function BreakdownRow({
       {hasData ? (
         <View style={styles.rowRight}>
           <View style={[styles.miniTrack, { backgroundColor: colors.surfaceAlt }]}>
-            <View style={[styles.miniFill, { flex: data!.yes_pct, backgroundColor: colors.agree }]} />
-            <View style={[styles.miniFill, { flex: 100 - data!.yes_pct, backgroundColor: colors.disagree }]} />
+            <View style={[styles.miniFill, { flex: data!.yes_pct, backgroundColor: colors.accent }]} />
+            <View style={[styles.miniFill, { flex: 100 - data!.yes_pct, backgroundColor: colors.border }]} />
           </View>
-          <Text
-            style={[
-              styles.rowPct,
-              { color: data!.yes_pct >= 50 ? colors.agree : colors.disagree },
-            ]}
-          >
+          <Text style={[styles.rowPct, { color: colors.accent }]}>
             {data!.yes_pct >= 50 ? data!.yes_pct : 100 - data!.yes_pct}%
           </Text>
         </View>
@@ -107,7 +70,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   heading: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_500Medium',
     fontSize: 10,
     letterSpacing: 0.8,
   },
@@ -118,7 +81,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   rowLabel: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 12,
     flex: 1,
   },
@@ -137,13 +100,13 @@ const styles = StyleSheet.create({
   },
   miniFill: {},
   rowPct: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_500Medium',
     fontSize: 12,
     width: 32,
     textAlign: 'right',
   },
   noData: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 12,
   },
 });

@@ -1,12 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Redis } from "npm:@upstash/redis";
+import { getAuthenticatedUser } from "../_shared/auth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-type FeedMode = "trending" | "fresh" | "closest" | "for_you" | "pending" | "review";
+type FeedMode = "trending" | "fresh" | "for_you" | "pending" | "review";
 
 interface PollRow {
   id: string;
@@ -31,6 +32,7 @@ interface PollWithCounts extends PollRow {
   user_vote: 1 | -1 | null;
   comment_count: number;
   user_upvoted?: boolean;
+  tags: string[];
 }
 
 Deno.serve(async (req) => {
@@ -38,10 +40,10 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: CORS });
   }
 
-  const start = Date.now();
+  const t0 = Date.now();
 
   try {
-    // ── Auth ──────────────────────────────────────────────────────────────
+    // ── Auth (JWT cache — ~0ms on warm calls, ~50ms on cold) ──────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
@@ -50,10 +52,14 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
+    const authResult = await getAuthenticatedUser(
       authHeader.replace("Bearer ", ""),
+      supabase,
     );
-    if (authError || !user) return json({ error: "Unauthorized" }, 401);
+    if (!authResult) return json({ error: "Unauthorized" }, 401);
+    const { userId, cached: authCached } = authResult;
+
+    const tAuth = Date.now() - t0;
 
     // ── Query params ──────────────────────────────────────────────────────
     const url = new URL(req.url);
@@ -61,8 +67,12 @@ Deno.serve(async (req) => {
     const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20"), 50);
     const cursorParam = url.searchParams.get("cursor");
     const cursor = cursorParam ? atob(cursorParam) : null;
+    const categoryFilter = url.searchParams.get("category") ?? null;
+    const timedFilter = url.searchParams.get("timed") === "true";
+    const tagFilter = url.searchParams.get("tag") ?? null;
 
-    console.log(`[feed] mode=${mode} limit=${limit} cursor=${cursor ?? "null"} userId=${user.id}`);
+    const pfx = `[feed:${mode}]`;
+    console.log(`${pfx} auth: ${tAuth}ms (${authCached ? "cache hit" : "cold"}) | limit=${limit} cursor=${cursor ?? "null"} category=${categoryFilter ?? "none"} timed=${timedFilter} tag=${tagFilter ?? "none"} userId=${userId}`);
 
     // ── Fetch polls from PostgreSQL ───────────────────────────────────────
     const SELECT_COLS = "id, question, category, poll_type, option_a, option_b, status, is_evergreen, expires_at, created_at, promoted_at, upvote_count";
@@ -82,37 +92,68 @@ Deno.serve(async (req) => {
       if (cursor) query = query.lt("promoted_at", cursor);
     }
 
+    if (categoryFilter) query = query.eq("category", categoryFilter);
+    if (timedFilter) query = query.not("expires_at", "is", null).gt("expires_at", now);
+
     const { data: polls, error: dbError } = await query;
     if (dbError) {
-      console.error("[feed] DB error:", dbError.message);
+      console.error(`${pfx} DB error:`, dbError.message);
       return json({ error: "Failed to fetch feed" }, 500);
     }
+
+    const tPollQuery = Date.now() - t0;
+    console.log(`${pfx} poll query: ${tPollQuery}ms (${polls?.length ?? 0} rows)`);
 
     const pagePolls = (polls as PollRow[]).slice(0, limit);
     const pollIds = pagePolls.map((p) => p.id);
 
-    console.log(`[feed] DB: ${polls?.length ?? 0} rows in ${Date.now() - start}ms`);
-
     if (pollIds.length === 0) {
+      console.log(`${pfx} done (empty) in ${Date.now() - t0}ms`);
       return json({ polls: [], cursor: null, has_more: false });
     }
 
-    // ── Batch: user votes + comment counts + upvotes — parallel ──────────
+    // ── Redis client ──────────────────────────────────────────────────────
+    const redis = new Redis({
+      url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
+      token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
+    });
+
+    // ── Redis pipeline + DB queries in parallel (both need only pollIds) ──
+    const isReviewMode = mode === "review" || mode === "pending";
+
+    const pipe = redis.pipeline();
+    for (const poll of pagePolls) {
+      pipe.get(`poll:${poll.id}:yes`);
+      pipe.get(`poll:${poll.id}:no`);
+      pipe.get(`poll:${poll.id}:total`);
+      pipe.get(`poll:${poll.id}:velocity`);
+    }
+
     const userVoteMap: Record<string, 1 | -1> = {};
     const commentCountMap: Record<string, number> = {};
     const userUpvoteSet = new Set<string>();
-    const isReviewMode = mode === "review" || mode === "pending";
+    let pipeResults: (number | null)[] = [];
+
+    const tBatchStart = Date.now();
 
     await Promise.all([
+      pipe.exec().then((results) => {
+        pipeResults = results as (number | null)[];
+        console.log(`${pfx} redis pipeline: ${Date.now() - t0}ms`);
+      }).catch((redisErr) => {
+        console.warn(`${pfx} redis pipeline error:`, String(redisErr));
+      }),
+
       supabase
         .from("votes")
         .select("poll_id, value")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .in("poll_id", pollIds)
         .then(({ data }) => {
           if (data) {
             for (const v of data) userVoteMap[v.poll_id] = v.value as 1 | -1;
           }
+          console.log(`${pfx} vote query: ${Date.now() - t0}ms`);
         }),
 
       supabase
@@ -126,13 +167,14 @@ Deno.serve(async (req) => {
               commentCountMap[c.poll_id] = (commentCountMap[c.poll_id] ?? 0) + 1;
             }
           }
+          console.log(`${pfx} comment counts: ${Date.now() - t0}ms`);
         }),
 
       isReviewMode
         ? supabase
           .from("poll_upvotes")
           .select("poll_id")
-          .eq("user_id", user.id)
+          .eq("user_id", userId)
           .in("poll_id", pollIds)
           .then(({ data }) => {
             if (data) {
@@ -142,74 +184,92 @@ Deno.serve(async (req) => {
         : Promise.resolve(),
     ]);
 
-    console.log(`[feed] votes+comments: ${Date.now() - start}ms`);
+    // Tags query placeholder — wire in when migration 012 poll_tags is live.
+    // Add to the Promise.all above:
+    //   supabase.from("poll_tags").select("poll_id, tag").in("poll_id", pollIds)
+    console.log(`${pfx} tags query: ${Date.now() - t0}ms (skipped — tags: [])`);
 
-    // ── Enrich with Redis counts (all polls in parallel) ──────────────────
-    const redis = new Redis({
-      url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
-      token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
-    });
+    const tBatch = Date.now() - tBatchStart;
+    console.log(`${pfx} full batch (redis+votes+comments): ${tBatch}ms`);
 
-    const enriched: PollWithCounts[] = await Promise.all(
-      pagePolls.map(async (poll) => {
-        try {
-          const [redisYes, redisNo, redisTotal, redisVelocity] = await Promise.all([
-            redis.get<number>(`poll:${poll.id}:yes`),
-            redis.get<number>(`poll:${poll.id}:no`),
-            redis.get<number>(`poll:${poll.id}:total`),
-            redis.get<number>(`poll:${poll.id}:velocity`),
-          ]);
+    // ── DB fallback for Redis misses + warm Redis for next request ────────
+    const missedIds: string[] = [];
+    for (let i = 0; i < pagePolls.length; i++) {
+      const total = pipeResults[i * 4 + 2];
+      if (total === null || total === undefined) missedIds.push(pagePolls[i].id);
+    }
 
-          if (redisTotal !== null) {
-            return {
-              ...poll,
-              yes_count: Number(redisYes ?? 0),
-              no_count: Number(redisNo ?? 0),
-              total_count: Number(redisTotal),
-              velocity: Number(redisVelocity ?? 0),
-              user_vote: userVoteMap[poll.id] ?? null,
-              comment_count: commentCountMap[poll.id] ?? 0,
-              user_upvoted: userUpvoteSet.has(poll.id),
-            };
-          }
-        } catch (redisErr) {
-          console.warn(`[feed] Redis error for poll ${poll.id}:`, String(redisErr));
+    const dbCountMap: Record<string, { yes_count: number; no_count: number; total_count: number }> = {};
+    if (missedIds.length > 0) {
+      const { data: vcRows } = await supabase
+        .from("vote_counts")
+        .select("poll_id, yes_count, no_count, total_count")
+        .in("poll_id", missedIds);
+
+      if (vcRows && vcRows.length > 0) {
+        // Populate the in-memory map for this response
+        for (const row of vcRows) {
+          dbCountMap[row.poll_id] = {
+            yes_count: row.yes_count,
+            no_count: row.no_count,
+            total_count: row.total_count,
+          };
         }
 
-        // Fallback to vote_counts table on Redis miss
-        const { data: vc } = await supabase
-          .from("vote_counts")
-          .select("yes_count, no_count, total_count")
-          .eq("poll_id", poll.id)
-          .maybeSingle();
+        // Write counts back to Redis so the next request hits cache.
+        // Fire-and-forget pipeline — one HTTP call for all missed polls.
+        const warmPipe = redis.pipeline();
+        for (const row of vcRows) {
+          warmPipe.set(`poll:${row.poll_id}:yes`, row.yes_count);
+          warmPipe.set(`poll:${row.poll_id}:no`, row.no_count);
+          warmPipe.set(`poll:${row.poll_id}:total`, row.total_count);
+        }
+        warmPipe.exec().catch((e: unknown) =>
+          console.warn(`${pfx} redis warmup failed:`, String(e))
+        );
+      }
 
+      console.log(`${pfx} db fallback (${missedIds.length} misses): ${Date.now() - t0}ms`);
+    }
+
+    // ── Enrich ────────────────────────────────────────────────────────────
+    const enriched: PollWithCounts[] = pagePolls.map((poll, i) => {
+      const base = i * 4;
+      const redisTotal = pipeResults[base + 2];
+      if (redisTotal !== null && redisTotal !== undefined) {
         return {
           ...poll,
-          yes_count: vc?.yes_count ?? 0,
-          no_count: vc?.no_count ?? 0,
-          total_count: vc?.total_count ?? 0,
-          velocity: 0,
+          yes_count: Number(pipeResults[base] ?? 0),
+          no_count: Number(pipeResults[base + 1] ?? 0),
+          total_count: Number(redisTotal),
+          velocity: Number(pipeResults[base + 3] ?? 0),
           user_vote: userVoteMap[poll.id] ?? null,
           comment_count: commentCountMap[poll.id] ?? 0,
           user_upvoted: userUpvoteSet.has(poll.id),
+          tags: [],
         };
-      }),
-    );
-
-    if (mode === "closest") {
-      enriched.sort((a, b) => {
-        const controversy = (p: PollWithCounts) =>
-          p.total_count === 0 ? 0 : 1 - Math.abs(p.yes_count / p.total_count - 0.5) * 2;
-        return controversy(b) - controversy(a);
-      });
-    }
+      }
+      const vc = dbCountMap[poll.id];
+      return {
+        ...poll,
+        yes_count: vc?.yes_count ?? 0,
+        no_count: vc?.no_count ?? 0,
+        total_count: vc?.total_count ?? 0,
+        velocity: 0,
+        user_vote: userVoteMap[poll.id] ?? null,
+        comment_count: commentCountMap[poll.id] ?? 0,
+        user_upvoted: userUpvoteSet.has(poll.id),
+        tags: [],
+      };
+    });
 
     const hasMore = (polls as PollRow[]).length > limit;
     const lastItem = enriched[enriched.length - 1];
     const cursorField = isReviewMode ? lastItem?.created_at : lastItem?.promoted_at;
     const nextCursor = hasMore && cursorField ? btoa(cursorField) : null;
 
-    console.log(`[feed] done — ${enriched.length} polls in ${Date.now() - start}ms`);
+    const tTotal = Date.now() - t0;
+    console.log(`${pfx} done — ${enriched.length} polls in ${tTotal}ms (auth=${tAuth}ms poll_query=${tPollQuery - tAuth}ms batch=${tBatch}ms)`);
 
     return json({ polls: enriched, cursor: nextCursor, has_more: hasMore });
   } catch (err) {

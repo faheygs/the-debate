@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Redis } from "npm:@upstash/redis";
+import { getAuthenticatedUser } from "../_shared/auth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -19,7 +20,7 @@ Deno.serve(async (req) => {
   const start = Date.now();
 
   try {
-    // ── Auth ──────────────────────────────────────────────────────────────
+    // ── Auth (JWT cache) ──────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
@@ -28,15 +29,16 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
+    const authResult = await getAuthenticatedUser(
       authHeader.replace("Bearer ", ""),
+      supabase,
     );
-    if (authError || !user) return json({ error: "Unauthorized" }, 401);
-    const userId = user.id;
+    if (!authResult) return json({ error: "Unauthorized" }, 401);
+    const userId = authResult.userId;
 
     // ── Parse body ────────────────────────────────────────────────────────
     const body = await req.json();
-    const { question, category, poll_type = "binary", option_a, option_b } = body;
+    const { question, category, poll_type = "binary", option_a, option_b, tags } = body;
 
     if (!question || typeof question !== "string" || question.trim().length < 10) {
       return json({ error: "Question must be at least 10 characters" }, 400);
@@ -64,9 +66,9 @@ Deno.serve(async (req) => {
 
     const trimmedQuestion = question.trim();
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // ── INSERT poll (auto-approved, live immediately) ──────────────────────
+    // ── INSERT poll ───────────────────────────────────────────────────────
     const insertPayload: Record<string, unknown> = {
       question: trimmedQuestion,
       category,
@@ -94,18 +96,47 @@ Deno.serve(async (req) => {
 
     console.log(`[submit-poll] inserted ${inserted.id} in ${Date.now() - start}ms`);
 
+    // ── Tags (fire-and-forget) ────────────────────────────────────────────
+    if (Array.isArray(tags) && tags.length > 0) {
+      const tagInserts = (tags as unknown[])
+        .slice(0, 5)
+        .filter((t): t is string => typeof t === "string" && t.length > 0)
+        .map(t => ({ poll_id: inserted.id, tag: t.toLowerCase().slice(0, 50) }));
+
+      if (tagInserts.length > 0) {
+        supabase.from("poll_tags").insert(tagInserts).then(() => {}).catch((e: unknown) =>
+          console.warn("[submit-poll] tag insert failed:", e)
+        );
+      }
+    }
+
+    // ── Poll Promoted notification (fire-and-forget) ─────────────────────
+    supabase
+      .from('users')
+      .select('expo_push_token')
+      .eq('id', userId)
+      .maybeSingle()
+      .then(({ data: submitter }) => {
+        const token = submitter?.expo_push_token;
+        if (!token) return;
+        fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-notification`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+          body: JSON.stringify({ token, title: 'Your debate is live', body: 'People are voting on it now', data: { type: 'poll_promoted', poll_id: inserted.id } }),
+        });
+      })
+      .catch(() => {});
+
     // ── Redis + Realtime (fire-and-forget) ────────────────────────────────
     const redis = new Redis({
       url: Deno.env.get("UPSTASH_REDIS_REST_URL")!,
       token: Deno.env.get("UPSTASH_REDIS_REST_TOKEN")!,
     });
 
-    // Add to trending feed with initial score of 10
     redis.zadd("feed:trending", { score: 10, member: inserted.id }).catch((e: unknown) =>
       console.warn("[submit-poll] Redis zadd failed:", e)
     );
 
-    // Broadcast to feed:global so subscribed clients refresh
     supabase.channel("feed:global").send({
       type: "broadcast",
       event: "new_poll",

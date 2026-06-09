@@ -37,7 +37,13 @@ export function Toast({ message, variant = 'info', duration = 3000, visible, onD
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [visible, message]);
 
-  const bgColor = variant === 'success' ? colors.agree : variant === 'error' ? colors.disagree : colors.primary;
+  const bgColor =
+    variant === 'success' ? colors.accent :
+    variant === 'error' ? colors.accentDark :
+    colors.surfaceAlt;
+
+  const textColor =
+    variant === 'success' || variant === 'error' ? colors.accentText : colors.text;
 
   if (!visible) return null;
 
@@ -45,11 +51,11 @@ export function Toast({ message, variant = 'info', duration = 3000, visible, onD
     <Animated.View
       style={[
         styles.container,
-        { backgroundColor: bgColor, transform: [{ translateY }], opacity },
+        { backgroundColor: bgColor, borderColor: colors.border, transform: [{ translateY }], opacity },
       ]}
       pointerEvents="none"
     >
-      <Text style={styles.text}>{message}</Text>
+      <Text style={[styles.text, { color: textColor }]}>{message}</Text>
     </Animated.View>
   );
 }
@@ -60,15 +66,15 @@ const styles = StyleSheet.create({
     bottom: 90,
     left: 16,
     right: 16,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 0.5,
     paddingVertical: 12,
     paddingHorizontal: 16,
     zIndex: 999,
   },
   text: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_500Medium',
     fontSize: 13,
-    color: '#fff',
     textAlign: 'center',
   },
 });

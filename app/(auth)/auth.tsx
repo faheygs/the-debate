@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   StyleSheet,
+  Text,
   TextInput,
   TouchableOpacity,
   View,
@@ -10,17 +11,14 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { useColors } from '@/constants/colors';
 
 type Mode = 'signin' | 'signup';
 
 export default function AuthScreen() {
-  const theme = useTheme();
+  const colors = useColors();
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
@@ -70,31 +68,24 @@ export default function AuthScreen() {
   }
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView style={styles.safe}>
         <KeyboardAvoidingView
           style={styles.inner}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={styles.header}>
-            <ThemedText type="title" style={styles.appName}>The Debate</ThemedText>
-            <ThemedText type="default" themeColor="textSecondary" style={styles.tagline}>
+            <Text style={[styles.appName, { color: colors.text }]}>The Debate</Text>
+            <Text style={[styles.tagline, { color: colors.textSecondary }]}>
               No name. No photo. Just your opinion.
-            </ThemedText>
+            </Text>
           </View>
 
           <View style={styles.form}>
             <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: theme.backgroundElement,
-                  color: theme.text,
-                  borderColor: theme.backgroundSelected,
-                },
-              ]}
+              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
               placeholder="Email"
-              placeholderTextColor={theme.textSecondary}
+              placeholderTextColor={colors.textTertiary}
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -104,16 +95,9 @@ export default function AuthScreen() {
               editable={!submitting}
             />
             <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: theme.backgroundElement,
-                  color: theme.text,
-                  borderColor: theme.backgroundSelected,
-                },
-              ]}
+              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
               placeholder="Password"
-              placeholderTextColor={theme.textSecondary}
+              placeholderTextColor={colors.textTertiary}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -124,37 +108,35 @@ export default function AuthScreen() {
             />
 
             {error ? (
-              <ThemedText type="small" style={styles.error}>
-                {error}
-              </ThemedText>
+              <Text style={[styles.error, { color: colors.accent }]}>{error}</Text>
             ) : null}
 
             <TouchableOpacity
-              style={[styles.button, submitting && styles.buttonDisabled]}
+              style={[styles.button, { backgroundColor: colors.accent }, submitting && styles.buttonDisabled]}
               onPress={handleSubmit}
               disabled={submitting}
               activeOpacity={0.85}
             >
               {submitting ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.accentText} />
               ) : (
-                <ThemedText style={styles.buttonText}>
+                <Text style={[styles.buttonText, { color: colors.accentText }]}>
                   {mode === 'signup' ? 'Create Account' : 'Sign In'}
-                </ThemedText>
+                </Text>
               )}
             </TouchableOpacity>
           </View>
 
           <TouchableOpacity onPress={toggleMode} activeOpacity={0.7}>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.toggle}>
+            <Text style={[styles.toggle, { color: colors.textSecondary }]}>
               {mode === 'signin'
                 ? "Don't have an account? Sign up"
                 : 'Already have an account? Sign in'}
-            </ThemedText>
+            </Text>
           </TouchableOpacity>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </ThemedView>
+    </View>
   );
 }
 
@@ -163,31 +145,50 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   inner: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: 24,
     justifyContent: 'center',
-    gap: Spacing.five,
+    gap: 32,
   },
-  header: { alignItems: 'center', gap: Spacing.two },
-  appName: { textAlign: 'center' },
-  tagline: { textAlign: 'center' },
-  form: { gap: Spacing.three },
+  header: { alignItems: 'center', gap: 8 },
+  appName: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 32,
+    textAlign: 'center',
+  },
+  tagline: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+  form: { gap: 12 },
   input: {
     height: 52,
     borderRadius: 12,
-    paddingHorizontal: Spacing.three,
+    paddingHorizontal: 16,
+    fontFamily: 'Inter_400Regular',
     fontSize: 16,
     borderWidth: 1,
   },
-  error: { color: '#FF453A', textAlign: 'center' },
+  error: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    textAlign: 'center',
+  },
   button: {
     height: 52,
     borderRadius: 12,
-    backgroundColor: '#208AEF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: Spacing.one,
+    marginTop: 4,
   },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  toggle: { textAlign: 'center' },
+  buttonText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 16,
+  },
+  toggle: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    textAlign: 'center',
+  },
 });

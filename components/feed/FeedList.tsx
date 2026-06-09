@@ -1,5 +1,6 @@
 import { useRef, useCallback } from 'react';
-import { FlatList, ScrollView, StyleSheet, RefreshControl } from 'react-native';
+import { View, Text, FlatList, ScrollView, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { router } from 'expo-router';
 import { subscribeToPoll } from '@/lib/realtime';
 import { PollCard } from './PollCard';
 import { PollCardSkeleton } from './PollCardSkeleton';
@@ -14,11 +15,15 @@ interface Props {
   loading: boolean;
   refreshing: boolean;
   hasMore: boolean;
+  error?: string | null;
+  loadMoreError?: string | null;
   getUserVote: (pollId: string) => 1 | -1 | null;
   onVote: (pollId: string, value: 1 | -1) => void;
   onUpvote?: (pollId: string) => void;
+  onTagPress?: (tag: string) => void;
   onLoadMore: () => void;
   onRefresh: () => void;
+  onRetry?: () => void;
   onCountsUpdate: (pollId: string, yes: number, no: number, total: number) => void;
 }
 
@@ -27,11 +32,15 @@ export function FeedList({
   loading,
   refreshing,
   hasMore,
+  error,
+  loadMoreError,
   getUserVote,
   onVote,
   onUpvote,
+  onTagPress,
   onLoadMore,
   onRefresh,
+  onRetry,
   onCountsUpdate,
 }: Props) {
   const colors = useColors();
@@ -63,11 +72,9 @@ export function FeedList({
   }, []);
 
   const onViewableItemsChanged = useRef(({ viewableItems, changed }: any) => {
-    // Subscribe to newly visible polls
     for (const item of viewableItems) {
       subscribeIfNeeded(item.item.id);
     }
-    // Unsubscribe from polls that scrolled out
     for (const item of changed) {
       if (!item.isViewable) {
         unsubscribeIfPresent(item.item.id);
@@ -81,8 +88,8 @@ export function FeedList({
     <RefreshControl
       refreshing={refreshing}
       onRefresh={onRefresh}
-      tintColor={colors.primary}
-      colors={[colors.primary]}
+      tintColor={colors.accent}
+      colors={[colors.accent]}
     />
   );
 
@@ -98,6 +105,23 @@ export function FeedList({
     );
   }
 
+  if (error && polls.length === 0) {
+    return (
+      <ScrollView
+        refreshControl={refreshControl}
+        contentContainerStyle={styles.emptyContainer}
+        showsVerticalScrollIndicator={false}
+      >
+        <EmptyState
+          icon="wifi-outline"
+          heading="Couldn't load debates"
+          subtext="Check your connection and pull to refresh"
+          button={onRetry ? { label: 'Try Again', onPress: onRetry } : undefined}
+        />
+      </ScrollView>
+    );
+  }
+
   if (!loading && polls.length === 0) {
     return (
       <ScrollView
@@ -106,9 +130,10 @@ export function FeedList({
         showsVerticalScrollIndicator={false}
       >
         <EmptyState
-          icon="flame-outline"
-          heading="Nothing here yet"
-          subtext="Pull down to refresh or try a different mode."
+          icon="chatbubbles-outline"
+          heading="No debates here yet"
+          subtext="Be the first to start one"
+          button={{ label: 'Start a Debate', onPress: () => router.navigate('/(tabs)/submit') }}
         />
       </ScrollView>
     );
@@ -126,14 +151,28 @@ export function FeedList({
           userVote={getUserVote(item.id)}
           onVote={onVote}
           onUpvote={onUpvote}
+          onTagPress={onTagPress}
         />
       )}
-      onEndReached={hasMore ? onLoadMore : undefined}
+      onEndReached={hasMore && !loadMoreError ? onLoadMore : undefined}
       onEndReachedThreshold={0.4}
       onViewableItemsChanged={onViewableItemsChanged}
       viewabilityConfig={viewabilityConfig}
       refreshControl={refreshControl}
       showsVerticalScrollIndicator={false}
+      removeClippedSubviews
+      maxToRenderPerBatch={8}
+      windowSize={5}
+      initialNumToRender={6}
+      ListFooterComponent={
+        loadMoreError ? (
+          <TouchableOpacity style={styles.loadMoreError} onPress={onLoadMore} activeOpacity={0.7}>
+            <Text style={[styles.loadMoreErrorText, { color: colors.textTertiary }]}>
+              Couldn't load more — tap to retry
+            </Text>
+          </TouchableOpacity>
+        ) : null
+      }
     />
   );
 }
@@ -142,4 +181,13 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 32 },
   skeletonContainer: { paddingHorizontal: 16, paddingTop: 12 },
   emptyContainer: { flex: 1 },
+  loadMoreError: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  loadMoreErrorText: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    textAlign: 'center',
+  },
 });

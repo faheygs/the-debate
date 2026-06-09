@@ -1,6 +1,5 @@
 import { View, StyleSheet } from 'react-native';
-import { useTheme } from '@/hooks/use-theme';
-import { Spacing } from '@/constants/theme';
+import { useColors } from '@/constants/colors';
 
 type Props = {
   current: number;
@@ -8,7 +7,7 @@ type Props = {
 };
 
 export function ProgressBar({ current, total }: Props) {
-  const theme = useTheme();
+  const colors = useColors();
 
   return (
     <View style={styles.container}>
@@ -17,7 +16,7 @@ export function ProgressBar({ current, total }: Props) {
           key={i}
           style={[
             styles.segment,
-            { backgroundColor: i < current ? '#208AEF' : theme.backgroundElement },
+            { backgroundColor: i < current ? colors.accent : colors.surfaceAlt },
           ]}
         />
       ))}
@@ -29,8 +28,8 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     gap: 4,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   segment: {
     flex: 1,

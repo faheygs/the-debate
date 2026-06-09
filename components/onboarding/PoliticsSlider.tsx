@@ -1,7 +1,5 @@
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
-import { ThemedText } from '@/components/themed-text';
-import { useTheme } from '@/hooks/use-theme';
-import { Spacing } from '@/constants/theme';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useColors } from '@/constants/colors';
 
 const STOPS = [
   { value: -2, label: 'Very\nLiberal' },
@@ -17,11 +15,11 @@ type Props = {
 };
 
 export function PoliticsSlider({ value, onChange }: Props) {
-  const theme = useTheme();
+  const colors = useColors();
 
   return (
     <View style={styles.container}>
-      <View style={[styles.track, { backgroundColor: theme.backgroundElement }]} />
+      <View style={[styles.track, { backgroundColor: colors.surfaceAlt }]} />
       <View style={styles.stops}>
         {STOPS.map(stop => {
           const active = value === stop.value;
@@ -36,21 +34,20 @@ export function PoliticsSlider({ value, onChange }: Props) {
                 style={[
                   styles.dot,
                   {
-                    backgroundColor: active ? '#208AEF' : theme.backgroundElement,
-                    borderColor: active ? '#208AEF' : theme.backgroundSelected,
+                    backgroundColor: active ? colors.accent : colors.surfaceAlt,
+                    borderColor: active ? colors.accent : colors.border,
                   },
                 ]}
               />
-              <ThemedText
-                type="small"
+              <Text
                 style={[
                   styles.label,
-                  { color: active ? '#208AEF' : theme.textSecondary },
+                  { color: active ? colors.accent : colors.textSecondary },
                   active && styles.labelActive,
                 ]}
               >
                 {stop.label}
-              </ThemedText>
+              </Text>
             </TouchableOpacity>
           );
         })}
@@ -61,15 +58,15 @@ export function PoliticsSlider({ value, onChange }: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   track: {
     position: 'absolute',
-    left: Spacing.four + 16,
-    right: Spacing.four + 16,
+    left: 32,
+    right: 32,
     height: 2,
-    top: Spacing.three + 15,
+    top: 27,
     borderRadius: 1,
   },
   stops: {
@@ -78,7 +75,7 @@ const styles = StyleSheet.create({
   },
   stopWrapper: {
     alignItems: 'center',
-    gap: Spacing.two,
+    gap: 8,
     width: 58,
   },
   dot: {
@@ -88,11 +85,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   label: {
+    fontFamily: 'Inter_400Regular',
     textAlign: 'center',
     fontSize: 11,
     lineHeight: 14,
   },
   labelActive: {
-    fontWeight: '700',
+    fontFamily: 'Inter_600SemiBold',
   },
 });

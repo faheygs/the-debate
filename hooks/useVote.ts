@@ -1,34 +1,74 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { castVote } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
+import type { PollDetailResponse } from '@/types/database';
 
-const STORAGE_KEY = 'voted_polls';
 type VoteMap = Record<string, 1 | -1>;
+
+const CLOSED_ERROR = 'This debate has closed';
+
+function voteKey(userId: string) {
+  return `voted_polls_${userId}`;
+}
 
 export function useVote(
   onCountsUpdate: (pollId: string, yes: number, no: number, total: number) => void,
   onError: (message: string) => void,
 ) {
-  const [votes, setVotes] = useState<VoteMap>({});
-  // Ref keeps the always-current map accessible inside async callbacks
-  // without adding `votes` as a dep and risking stale closures.
-  const votesRef = useRef<VoteMap>({});
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const queryClient = useQueryClient();
 
-  // Load persisted votes on mount
-  useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
+  const [votes, setVotes] = useState<VoteMap>({});
+  const votesRef = useRef<VoteMap>({});
+  const userIdRef = useRef<string | null>(userId);
+
+  const closedRef = useRef<Record<string, true>>({});
+  const [closedSnapshot, setClosedSnapshot] = useState<Record<string, true>>({});
+
+  function loadVotesForUser(uid: string) {
+    AsyncStorage.getItem(voteKey(uid))
       .then(raw => {
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as VoteMap;
+        const parsed = raw ? (JSON.parse(raw) as VoteMap) : {};
         votesRef.current = parsed;
         setVotes(parsed);
       })
       .catch(() => {});
+  }
+
+  function clearVoteState() {
+    votesRef.current = {};
+    setVotes({});
+    closedRef.current = {};
+    setClosedSnapshot({});
+  }
+
+  // Watch userId from context — load votes on sign-in, clear on sign-out
+  useEffect(() => {
+    userIdRef.current = userId;
+    if (userId) {
+      loadVotesForUser(userId);
+    } else {
+      clearVoteState();
+    }
+  }, [userId]);
+
+  const persist = useCallback((map: VoteMap) => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    AsyncStorage.setItem(voteKey(uid), JSON.stringify(map)).catch(() => {});
   }, []);
 
   const getUserVote = useCallback(
     (pollId: string): 1 | -1 | null => votes[pollId] ?? null,
     [votes],
+  );
+
+  const isPollClosed = useCallback(
+    (pollId: string): boolean => !!closedSnapshot[pollId],
+    [closedSnapshot],
   );
 
   const vote = useCallback(async (
@@ -40,7 +80,7 @@ export function useVote(
   ) => {
     if (votesRef.current[pollId] !== undefined) return;
 
-    // Optimistic update — apply immediately before server response
+    // Optimistic update
     const newYes = value === 1 ? currentYes + 1 : currentYes;
     const newNo = value === -1 ? currentNo + 1 : currentNo;
     const newTotal = currentTotal + 1;
@@ -52,30 +92,41 @@ export function useVote(
 
     try {
       const result = await castVote(pollId, value);
-      // Persist confirmed vote — fire-and-forget
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(votesRef.current)).catch(() => {});
+      persist(votesRef.current);
       onCountsUpdate(pollId, result.yes_count, result.no_count, result.total);
+
+      // Also update the poll detail cache so navigating there shows fresh counts
+      queryClient.setQueryData(
+        ['poll', pollId, userIdRef.current],
+        (prev: PollDetailResponse | undefined) =>
+          prev
+            ? { ...prev, yes_count: result.yes_count, no_count: result.no_count, total_count: result.total, user_vote: value }
+            : prev,
+      );
     } catch (e: any) {
-      // Revert optimistic update on failure
+      // Revert
       const reverted = { ...votesRef.current };
       delete reverted[pollId];
       votesRef.current = reverted;
       setVotes(reverted);
       onCountsUpdate(pollId, currentYes, currentNo, currentTotal);
-      onError(e?.message ?? 'Failed to cast vote');
-    }
-  }, [onCountsUpdate, onError]);
 
-  // Hydrate a known vote from the server without calling the API.
-  // Used when the feed returns user_vote on a poll the user already voted on.
+      const msg: string = e?.message ?? 'Failed to cast vote';
+      if (msg === CLOSED_ERROR) {
+        closedRef.current[pollId] = true;
+        setClosedSnapshot({ ...closedRef.current });
+      }
+      onError(msg);
+    }
+  }, [onCountsUpdate, onError, persist, queryClient]);
+
   const initVote = useCallback((pollId: string, value: 1 | -1) => {
-    if (votesRef.current[pollId] !== undefined) return; // already known
+    if (votesRef.current[pollId] !== undefined) return;
     const updated: VoteMap = { ...votesRef.current, [pollId]: value };
     votesRef.current = updated;
     setVotes(updated);
-    // Persist so subsequent app launches don't need to re-hydrate from server
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated)).catch(() => {});
-  }, []);
+    persist(updated);
+  }, [persist]);
 
-  return { getUserVote, vote, initVote };
+  return { getUserVote, vote, initVote, isPollClosed };
 }

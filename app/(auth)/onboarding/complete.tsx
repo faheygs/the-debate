@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   View,
+  Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -8,13 +9,11 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { useColors } from '@/constants/colors';
 import { ProgressBar } from '@/components/onboarding/ProgressBar';
 import { VoteButtons } from '@/components/poll/VoteButtons';
 import { useOnboarding } from '@/hooks/useOnboarding';
 import { supabase } from '@/lib/supabase';
-import { Spacing } from '@/constants/theme';
 import type { PollType } from '@/types/app';
 
 type SeedPollData = {
@@ -26,38 +25,17 @@ type SeedPollData = {
 };
 
 const SEED_POLLS: SeedPollData[] = [
-  {
-    question: 'Is pineapple acceptable on pizza?',
-    category: 'culture',
-    pollType: 'binary',
-  },
-  {
-    question: 'Should the voting age be lowered to 16?',
-    category: 'politics',
-    pollType: 'binary',
-  },
-  {
-    question: "Is it ever okay to lie to protect someone's feelings?",
-    category: 'ethics',
-    pollType: 'binary',
-  },
-  {
-    question: 'Would you rather have more money or more time?',
-    category: 'hypothetical',
-    pollType: 'versus',
-    optionA: 'More money',
-    optionB: 'More time',
-  },
-  {
-    question: 'Should there be a 4-day work week?',
-    category: 'culture',
-    pollType: 'binary',
-  },
+  { question: 'Is pineapple acceptable on pizza?', category: 'culture', pollType: 'binary' },
+  { question: 'Should the voting age be lowered to 16?', category: 'politics', pollType: 'binary' },
+  { question: "Is it ever okay to lie to protect someone's feelings?", category: 'ethics', pollType: 'binary' },
+  { question: 'Would you rather have more money or more time?', category: 'hypothetical', pollType: 'versus', optionA: 'More money', optionB: 'More time' },
+  { question: 'Should there be a 4-day work week?', category: 'culture', pollType: 'binary' },
 ];
 
 type Vote = 1 | -1;
 
 export default function CompleteScreen() {
+  const colors = useColors();
   const { data } = useOnboarding();
   const [votes, setVotes] = useState<Record<number, Vote>>({});
   const [showPolls, setShowPolls] = useState(true);
@@ -72,11 +50,9 @@ export default function CompleteScreen() {
     setSubmitting(true);
     setError(null);
 
-    // Always get a fresh session — never rely on stale context
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError || !session?.user) {
-      console.error('[complete] No active session:', sessionError);
       setError('Session expired. Please sign in again.');
       setSubmitting(false);
       return;
@@ -96,21 +72,12 @@ export default function CompleteScreen() {
       education_level: data.education_level ?? null,
     };
 
-    console.log('[complete] Inserting user row:', JSON.stringify(payload, null, 2));
-
     const { error: insertError } = await supabase.from('users').insert(payload);
 
     setSubmitting(false);
 
     if (insertError) {
-      console.error('[complete] Insert failed — code:', insertError.code);
-      console.error('[complete] message:', insertError.message);
-      console.error('[complete] details:', insertError.details);
-      console.error('[complete] hint:', insertError.hint);
-
-      // Duplicate key: user row already exists (e.g. retry after a crash)
       if (insertError.code === '23505') {
-        console.log('[complete] User row already exists — checking tour flag in DB');
         const { data: existingRow } = await supabase
           .from('users')
           .select('has_seen_tour')
@@ -119,7 +86,6 @@ export default function CompleteScreen() {
         router.replace(existingRow?.has_seen_tour ? '/(tabs)' : '/(auth)/onboarding/welcome-tour');
         return;
       }
-
       setError(`Setup failed (${insertError.code ?? 'unknown'}): ${insertError.message}`);
       return;
     }
@@ -128,7 +94,7 @@ export default function CompleteScreen() {
   }
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView style={styles.safe}>
         <ProgressBar current={7} total={7} />
 
@@ -138,22 +104,18 @@ export default function CompleteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.hero}>
-            <ThemedText type="subtitle" style={styles.headline}>
-              You're in.
-            </ThemedText>
-            <ThemedText type="default" themeColor="textSecondary" style={styles.subline}>
+            <Text style={[styles.headline, { color: colors.text }]}>You're in.</Text>
+            <Text style={[styles.subline, { color: colors.textSecondary }]}>
               No name. No photo. Just your opinion.
-            </ThemedText>
+            </Text>
           </View>
 
           <View style={styles.pollsHeader}>
-            <ThemedText type="default" style={styles.pollsLabel}>
-              Cast your first votes:
-            </ThemedText>
+            <Text style={[styles.pollsLabel, { color: colors.text }]}>Cast your first votes:</Text>
             <TouchableOpacity onPress={() => setShowPolls(v => !v)} activeOpacity={0.7}>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.pollsToggle}>
+              <Text style={[styles.pollsToggle, { color: colors.textSecondary }]}>
                 {showPolls ? 'Skip' : 'Show'}
-              </ThemedText>
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -169,32 +131,33 @@ export default function CompleteScreen() {
                   optionB={poll.optionB}
                   vote={votes[i] ?? null}
                   onVote={v => toggleVote(i, v)}
+                  colors={colors}
                 />
               ))}
             </View>
           )}
 
           {error ? (
-            <ThemedText type="small" style={styles.error}>{error}</ThemedText>
+            <Text style={[styles.error, { color: colors.accent }]}>{error}</Text>
           ) : null}
         </ScrollView>
 
         <View style={styles.footer}>
           <TouchableOpacity
-            style={[styles.button, submitting && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: colors.accent }, submitting && styles.buttonDisabled]}
             onPress={handleGetStarted}
             disabled={submitting}
             activeOpacity={0.85}
           >
             {submitting ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.accentText} />
             ) : (
-              <ThemedText style={styles.buttonText}>Get Started</ThemedText>
+              <Text style={[styles.buttonText, { color: colors.accentText }]}>Get Started</Text>
             )}
           </TouchableOpacity>
         </View>
       </SafeAreaView>
-    </ThemedView>
+    </View>
   );
 }
 
@@ -206,15 +169,16 @@ type SeedPollCardProps = {
   optionB?: string;
   vote: Vote | null;
   onVote: (v: Vote) => void;
+  colors: ReturnType<typeof useColors>;
 };
 
-function SeedPollCard({ question, category, pollType, optionA, optionB, vote, onVote }: SeedPollCardProps) {
+function SeedPollCard({ question, category, pollType, optionA, optionB, vote, onVote, colors }: SeedPollCardProps) {
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.cardCategory}>
+    <View style={[styles.card, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+      <Text style={[styles.cardCategory, { color: colors.textSecondary }]}>
         {category.toUpperCase()}
-      </ThemedText>
-      <ThemedText type="default" style={styles.cardQuestion}>{question}</ThemedText>
+      </Text>
+      <Text style={[styles.cardQuestion, { color: colors.text }]}>{question}</Text>
       <VoteButtons
         pollType={pollType}
         optionA={optionA}
@@ -222,7 +186,7 @@ function SeedPollCard({ question, category, pollType, optionA, optionB, vote, on
         userVote={vote}
         onVote={onVote}
       />
-    </ThemedView>
+    </View>
   );
 }
 
@@ -230,45 +194,76 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   safe: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { gap: Spacing.three, paddingBottom: Spacing.four },
+  scrollContent: { gap: 12, paddingBottom: 16 },
   hero: {
     alignItems: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.four,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
-  headline: { textAlign: 'center' },
-  subline: { textAlign: 'center' },
+  headline: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 28,
+    textAlign: 'center',
+  },
+  subline: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 15,
+    textAlign: 'center',
+  },
   pollsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    marginTop: Spacing.two,
+    paddingHorizontal: 16,
+    marginTop: 8,
   },
-  pollsLabel: { fontWeight: '600' },
-  pollsToggle: { paddingLeft: Spacing.three },
-  polls: { gap: Spacing.two, paddingHorizontal: Spacing.four },
+  pollsLabel: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 15,
+  },
+  pollsToggle: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 14,
+    paddingLeft: 12,
+  },
+  polls: { gap: 8, paddingHorizontal: 16 },
   card: {
     borderRadius: 14,
-    padding: Spacing.three,
-    gap: Spacing.two,
+    borderWidth: 0.5,
+    padding: 12,
+    gap: 8,
   },
-  cardCategory: { letterSpacing: 0.8 },
-  cardQuestion: { fontWeight: '600', lineHeight: 22 },
-  error: { color: '#F43F5E', textAlign: 'center', paddingHorizontal: Spacing.four },
+  cardCategory: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 10,
+    letterSpacing: 0.8,
+  },
+  cardQuestion: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  error: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
   footer: {
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-    paddingTop: Spacing.two,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    paddingTop: 8,
   },
   button: {
     height: 52,
     borderRadius: 12,
-    backgroundColor: '#208AEF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  buttonText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 16,
+  },
 });

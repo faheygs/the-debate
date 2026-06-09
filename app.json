@@ -39,6 +39,16 @@
             "imageWidth": 76
           }
         }
+      ],
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#C8762A",
+          "sounds": [],
+          "mode": "production"
+        }
       ]
     ],
     "experiments": {

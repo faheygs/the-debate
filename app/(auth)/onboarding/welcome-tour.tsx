@@ -91,7 +91,6 @@ export default function WelcomeTourScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <SafeAreaView style={styles.safe}>
-        {/* Header — Skip link on slides 1–4 */}
         <View style={styles.header}>
           <View style={styles.headerSpacer} />
           {!isLast ? (
@@ -103,7 +102,6 @@ export default function WelcomeTourScreen() {
           )}
         </View>
 
-        {/* Slides */}
         <FlatList
           ref={flatListRef}
           data={SLIDES}
@@ -119,7 +117,6 @@ export default function WelcomeTourScreen() {
           style={styles.list}
         />
 
-        {/* Footer — dots + CTA */}
         <View style={styles.footer}>
           <View style={styles.dots}>
             {SLIDES.map((_, i) => (
@@ -128,7 +125,7 @@ export default function WelcomeTourScreen() {
                 style={[
                   styles.dot,
                   i === currentIndex
-                    ? [styles.dotActive, { backgroundColor: colors.primary }]
+                    ? [styles.dotActive, { backgroundColor: colors.accent }]
                     : { backgroundColor: colors.border },
                 ]}
               />
@@ -137,14 +134,13 @@ export default function WelcomeTourScreen() {
 
           {isLast ? (
             <TouchableOpacity
-              style={[styles.letsGoBtn, { backgroundColor: colors.primary }]}
+              style={[styles.letsGoBtn, { backgroundColor: colors.accent }]}
               onPress={exitTour}
               activeOpacity={0.85}
             >
-              <Text style={styles.letsGoBtnText}>Let's go</Text>
+              <Text style={[styles.letsGoBtnText, { color: colors.accentText }]}>Let's go</Text>
             </TouchableOpacity>
           ) : (
-            // Reserve space so footer height stays fixed across all slides
             <View style={styles.btnPlaceholder} />
           )}
         </View>
@@ -162,7 +158,7 @@ type SlideItemProps = {
 function SlideItem({ slide, width, colors }: SlideItemProps) {
   return (
     <View style={[styles.slide, { width }]}>
-      <Ionicons name={slide.icon} size={64} color={colors.primary} />
+      <Ionicons name={slide.icon} size={64} color={colors.accent} />
       <Text style={[styles.heading, { color: colors.text }]}>{slide.heading}</Text>
       <Text style={[styles.body, { color: colors.textSecondary }]}>{slide.body}</Text>
     </View>
@@ -172,7 +168,6 @@ function SlideItem({ slide, width, colors }: SlideItemProps) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safe: { flex: 1 },
-
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -183,12 +178,10 @@ const styles = StyleSheet.create({
   },
   headerSpacer: { width: 48 },
   skipText: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 15,
   },
-
   list: { flex: 1 },
-
   slide: {
     flex: 1,
     alignItems: 'center',
@@ -197,18 +190,17 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   heading: {
-    fontFamily: 'Syne_700Bold',
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 24,
-    lineHeight: 31, // 1.3 × 24
+    lineHeight: 31,
     textAlign: 'center',
   },
   body: {
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'Inter_400Regular',
     fontSize: 16,
-    lineHeight: 26, // ~1.6 × 16
+    lineHeight: 26,
     textAlign: 'center',
   },
-
   footer: {
     paddingHorizontal: 16,
     paddingBottom: 24,
@@ -230,18 +222,16 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-
   letsGoBtn: {
     height: 52,
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'stretch',
   },
   letsGoBtnText: {
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 15,
-    color: '#fff',
   },
   btnPlaceholder: {
     height: 52,

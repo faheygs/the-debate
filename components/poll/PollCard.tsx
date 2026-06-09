@@ -1,9 +1,7 @@
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
-import { ThemedText } from '@/components/themed-text';
 import { VoteButtons } from './VoteButtons';
 import { useColors } from '@/constants/colors';
-import { Spacing } from '@/constants/theme';
 import type { Poll } from '@/types/app';
 
 type Props = {
@@ -18,7 +16,6 @@ export function PollCard({ poll, userVote, yesCount, noCount, onVote }: Props) {
   const colors = useColors();
   const total = yesCount + noCount;
   const yesPct = total > 0 ? Math.round((yesCount / total) * 100) : 50;
-  const noPct = 100 - yesPct;
 
   return (
     <TouchableOpacity
@@ -27,47 +24,32 @@ export function PollCard({ poll, userVote, yesCount, noCount, onVote }: Props) {
       activeOpacity={0.95}
     >
       <View style={styles.header}>
-        <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceAlt }]}>
-          <ThemedText style={[styles.categoryText, { color: colors.textSecondary }]}>
+        <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+          <Text style={[styles.categoryText, { color: colors.textSecondary }]}>
             {poll.category.toUpperCase()}
-          </ThemedText>
+          </Text>
         </View>
       </View>
 
-      <ThemedText style={[styles.question, { color: colors.text }]}>
+      <Text style={[styles.question, { color: colors.text }]}>
         {poll.question}
-      </ThemedText>
+      </Text>
 
-      {userVote !== null && (
+      {userVote !== null && total > 0 && (
         <View style={styles.barContainer}>
-          <View style={styles.barTrack}>
-            <View
-              style={[
-                styles.barFill,
-                { width: `${yesPct}%` as `${number}%`, backgroundColor: colors.agree },
-              ]}
-            />
-            <View
-              style={[
-                styles.barFillNo,
-                { width: `${noPct}%` as `${number}%`, backgroundColor: colors.disagree },
-              ]}
-            />
+          <View style={[styles.barTrack, { backgroundColor: colors.surfaceAlt }]}>
+            <View style={[styles.barFill, { width: `${yesPct}%` as `${number}%`, backgroundColor: colors.accent }]} />
           </View>
           <View style={styles.barLabels}>
-            <ThemedText style={[styles.barLabel, { color: colors.textTertiary }]}>
-              {yesPct}%
-            </ThemedText>
-            <ThemedText style={[styles.barLabel, { color: colors.textTertiary }]}>
-              {noPct}%
-            </ThemedText>
+            <Text style={[styles.barLabel, { color: colors.accent }]}>{yesPct}%</Text>
+            <Text style={[styles.barLabel, { color: colors.textTertiary }]}>{100 - yesPct}%</Text>
           </View>
         </View>
       )}
 
-      <ThemedText style={[styles.voteCount, { color: colors.textTertiary }]}>
+      <Text style={[styles.voteCount, { color: colors.textTertiary }]}>
         {formatCount(total)} votes
-      </ThemedText>
+      </Text>
 
       <VoteButtons
         pollType={poll.poll_type}
@@ -90,9 +72,9 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 12,
     borderWidth: 0.5,
-    padding: Spacing.three,
+    padding: 16,
     marginBottom: 12,
-    gap: Spacing.two,
+    gap: 10,
   },
   header: {
     flexDirection: 'row',
@@ -103,30 +85,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
+    borderWidth: 0.5,
   },
   categoryText: {
+    fontFamily: 'Inter_500Medium',
     fontSize: 10,
-    fontWeight: '500',
     letterSpacing: 0.5,
   },
   question: {
+    fontFamily: 'Inter_600SemiBold',
     fontSize: 17,
-    fontWeight: '700',
     lineHeight: 22,
   },
   barContainer: { gap: 4 },
   barTrack: {
-    flexDirection: 'row',
     height: 6,
     borderRadius: 99,
     overflow: 'hidden',
   },
   barFill: { height: '100%' },
-  barFillNo: { height: '100%' },
   barLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  barLabel: { fontSize: 11 },
-  voteCount: { fontSize: 11 },
+  barLabel: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+  },
+  voteCount: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 11,
+  },
 });

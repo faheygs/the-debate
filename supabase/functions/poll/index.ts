@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Redis } from "npm:@upstash/redis";
+import { getAuthenticatedUser } from "../_shared/auth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -14,7 +15,7 @@ Deno.serve(async (req) => {
   const start = Date.now();
 
   try {
-    // ── Auth ──────────────────────────────────────────────────────────────
+    // ── Auth (JWT cache) ──────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
@@ -23,11 +24,12 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
+    const authResult = await getAuthenticatedUser(
       authHeader.replace("Bearer ", ""),
+      supabase,
     );
-    if (authError || !user) return json({ error: "Unauthorized" }, 401);
-    const userId = user.id;
+    if (!authResult) return json({ error: "Unauthorized" }, 401);
+    const userId = authResult.userId;
 
     // ── Extract poll ID from path ─────────────────────────────────────────
     const url = new URL(req.url);
@@ -41,13 +43,11 @@ Deno.serve(async (req) => {
     });
 
     // ── All queries in parallel ───────────────────────────────────────────
-    // Collapses 4 sequential round-trip layers into 1
     const [
       pollResult,
       profileResult,
       voteRowsResult,
       rawCommentsResult,
-      myCommentResult,
       commentCountResult,
       userVoteResult,
       redisYes,
@@ -64,19 +64,15 @@ Deno.serve(async (req) => {
         .from("votes")
         .select("value, users(age_range, region, political_lean, gender)")
         .eq("poll_id", pollId),
+      // Fetch ALL approved comments — split in JS to guarantee no duplicate
       supabase
         .from("comments")
-        .select("id, content, created_at, users:user_id(age_range, region_detail, political_lean)")
+        .select("id, user_id, content, created_at, net_score, users:user_id(age_range, region_detail), opinion_votes(value, user_id)")
         .eq("poll_id", pollId)
         .eq("ai_decision", "approved")
+        .order("net_score", { ascending: false })
         .order("created_at", { ascending: false })
-        .limit(50),
-      supabase
-        .from("comments")
-        .select("id, content")
-        .eq("poll_id", pollId)
-        .eq("user_id", userId)
-        .maybeSingle(),
+        .limit(51),
       supabase
         .from("comments")
         .select("id", { count: "exact", head: true })
@@ -127,21 +123,39 @@ Deno.serve(async (req) => {
 
     // ── Build response ────────────────────────────────────────────────────
     const userVote: number | null = userVoteResult.data?.value ?? null;
-    const myComment = myCommentResult.data;
     const commentCount = commentCountResult.count ?? 0;
 
     const { demographic_breakdown, full_breakdown } = buildDemographicBreakdown(
       voteRowsResult.data ?? [],
     );
 
-    const comments = (rawCommentsResult.data ?? []).map((c: any) => ({
-      id: c.id,
-      content: c.content,
-      created_at: c.created_at,
-      age_range: c.users?.age_range ?? null,
-      region_detail: c.users?.region_detail ?? null,
-      political_lean: c.users?.political_lean ?? null,
-    }));
+    // Map all comments, keeping user_id for the split below
+    const allMapped = (rawCommentsResult.data ?? []).map((c: any) => {
+      const votes: { value: number; user_id: string }[] = c.opinion_votes ?? [];
+      const upCount = votes.filter(v => v.value === 1).length;
+      const downCount = votes.filter(v => v.value === -1).length;
+      const userOpinionVote = votes.find(v => v.user_id === userId)?.value ?? null;
+      return {
+        user_id: c.user_id as string,
+        id: c.id,
+        content: c.content,
+        created_at: c.created_at,
+        age_range: c.users?.age_range ?? null,
+        region_detail: c.users?.region_detail ?? null,
+        political_lean: null,
+        net_score: c.net_score ?? 0,
+        up_count: upCount,
+        down_count: downCount,
+        user_opinion_vote: userOpinionVote,
+      };
+    });
+
+    // Split: user's own comment goes to pinned card; all others go to the list
+    const ownComment = allMapped.find(c => c.user_id === userId) ?? null;
+    const comments = allMapped
+      .filter(c => c.user_id !== userId)
+      .slice(0, 50)
+      .map(({ user_id, ...rest }) => rest); // strip user_id — never expose to client
 
     const userDemographics = {
       age_group: profile?.age_range ?? null,
@@ -164,8 +178,8 @@ Deno.serve(async (req) => {
       full_breakdown,
       user_demographics: userDemographics,
       comments,
-      has_commented: myComment !== null,
-      user_comment: myComment?.content ?? null,
+      has_commented: ownComment !== null,
+      user_comment: ownComment?.content ?? null,
       comment_banned: profile?.comment_banned ?? false,
     });
   } catch (err) {

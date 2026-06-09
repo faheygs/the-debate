@@ -4,13 +4,13 @@ import { useColors } from '@/constants/colors';
 
 function ShimmerBox({ style }: { style: object }) {
   const colors = useColors();
-  const opacity = useRef(new Animated.Value(0.4)).current;
+  const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.8, duration: 600, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.7, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 700, useNativeDriver: true }),
       ]),
     );
     loop.start();
@@ -18,9 +18,7 @@ function ShimmerBox({ style }: { style: object }) {
   }, []);
 
   return (
-    <Animated.View
-      style={[{ backgroundColor: colors.surfaceAlt, opacity }, style]}
-    />
+    <Animated.View style={[{ backgroundColor: colors.surfaceAlt, opacity }, style]} />
   );
 }
 
@@ -45,18 +43,18 @@ export function PollCardSkeleton() {
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 0.5,
     padding: 16,
     marginBottom: 12,
     gap: 10,
   },
   header: { flexDirection: 'row', justifyContent: 'space-between' },
-  badge: { width: 60, height: 18, borderRadius: 4 },
-  statusBadge: { width: 70, height: 18, borderRadius: 4 },
+  badge: { width: 60, height: 18, borderRadius: 6 },
+  statusBadge: { width: 70, height: 18, borderRadius: 6 },
   questionLine1: { height: 14, borderRadius: 4, width: '100%' },
   questionLine2: { height: 14, borderRadius: 4, width: '75%' },
-  bar: { height: 6, borderRadius: 99, width: '100%' },
+  bar: { height: 5, borderRadius: 99, width: '100%' },
   buttons: { flexDirection: 'row', gap: 8 },
-  button: { flex: 1, height: 44, borderRadius: 8 },
+  button: { flex: 1, height: 44, borderRadius: 10 },
 });

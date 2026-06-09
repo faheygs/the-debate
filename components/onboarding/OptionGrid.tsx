@@ -1,7 +1,5 @@
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
-import { ThemedText } from '@/components/themed-text';
-import { useTheme } from '@/hooks/use-theme';
-import { Spacing } from '@/constants/theme';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useColors } from '@/constants/colors';
 
 type Option = {
   value: string;
@@ -16,7 +14,7 @@ type Props = {
 };
 
 export function OptionGrid({ options, selected, onSelect, columns = 2 }: Props) {
-  const theme = useTheme();
+  const colors = useColors();
 
   return (
     <View style={styles.grid}>
@@ -28,17 +26,17 @@ export function OptionGrid({ options, selected, onSelect, columns = 2 }: Props) 
             style={[
               styles.option,
               columns === 3 ? styles.option3 : styles.option2,
-              { backgroundColor: active ? '#208AEF' : theme.backgroundElement },
+              {
+                backgroundColor: active ? colors.accent : colors.surfaceAlt,
+                borderColor: active ? colors.accent : colors.border,
+              },
             ]}
             onPress={() => onSelect(opt.value)}
             activeOpacity={0.75}
           >
-            <ThemedText
-              type="default"
-              style={[styles.label, { color: active ? '#fff' : theme.text }]}
-            >
+            <Text style={[styles.label, { color: active ? colors.accentText : colors.text }]}>
               {opt.label}
-            </ThemedText>
+            </Text>
           </TouchableOpacity>
         );
       })}
@@ -50,21 +48,23 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
+    gap: 8,
+    paddingHorizontal: 16,
   },
   option: {
     minHeight: 64,
     borderRadius: 14,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   option2: { width: '47.5%' },
   option3: { width: '30.5%' },
   label: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 14,
     textAlign: 'center',
-    fontWeight: '600',
   },
 });

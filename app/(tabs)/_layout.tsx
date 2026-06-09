@@ -1,13 +1,14 @@
 import { Tabs, Redirect } from 'expo-router';
 import { Platform } from 'react-native';
 import { SymbolView } from 'expo-symbols';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/hooks/useAuth';
-import { useTheme } from '@/hooks/use-theme';
+import { useColors } from '@/constants/colors';
 import { Spacing } from '@/constants/theme';
 
 export default function TabsLayout() {
   const { session, loading } = useAuth();
-  const theme = useTheme();
+  const colors = useColors();
 
   if (loading) return null;
   if (!session) return <Redirect href="/(auth)/auth" />;
@@ -17,12 +18,12 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: theme.background,
-          borderTopColor: theme.backgroundElement,
+          backgroundColor: colors.background,
+          borderTopColor: colors.border,
           paddingBottom: Platform.select({ ios: 0, default: Spacing.two }),
         },
-        tabBarActiveTintColor: '#208AEF',
-        tabBarInactiveTintColor: theme.textSecondary,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textSecondary,
       }}
     >
       <Tabs.Screen
@@ -41,13 +42,9 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="search"
         options={{
-          title: 'Search',
-          tabBarIcon: ({ color, size }) => (
-            <SymbolView
-              name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
-              tintColor={color}
-              size={size}
-            />
+          title: 'Explore',
+          tabBarIcon: ({ color, focused, size }) => (
+            <Ionicons name={focused ? 'compass' : 'compass-outline'} size={size} color={color} />
           ),
         }}
       />
