@@ -19,6 +19,7 @@ export interface DbUser {
   comment_strikes: number;
   comment_banned: boolean;
   has_seen_tour: boolean;
+  insight_badge: boolean;
   expo_push_token: string | null;
   created_at: string;
   last_active_at: string;
@@ -88,9 +89,19 @@ export interface DbUserInsight {
   top_categories: Record<string, number> | null;
   political_actual: number | null;
   demographic_match: Record<string, unknown> | null;
-  insights_data: Record<string, unknown> | null;
+  insights_data: {
+    headline?: string;
+    observations?: string[];
+    tension?: string | null;
+    closer?: string;
+    top_insight?: string;
+    demographic_note?: string;
+    category_breakdown?: Record<string, number>;
+  } | null;
   last_generated_at: string | null;
+  week_start_date: string | null;
   vote_count_at_generation: number | null;
+  insight_seen: boolean | null;
 }
 
 // ── API response shapes (returned by Edge Functions) ─────────────────────

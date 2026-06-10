@@ -21,11 +21,21 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader.replace("Bearer ", ""),
-    );
-    if (authError || !user) return json({ error: "Unauthorized" }, 401);
-    const userId = user.id;
+    // Support both user JWT (client-triggered) and service role + userId (weekly-check)
+    let userId: string;
+    const isServiceRole = authHeader.replace("Bearer ", "") === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (isServiceRole) {
+      const body = await req.json().catch(() => ({}));
+      if (!body.userId) return json({ error: "userId required for service role calls" }, 400);
+      userId = body.userId;
+    } else {
+      const { data: { user }, error: authError } = await supabase.auth.getUser(
+        authHeader.replace("Bearer ", ""),
+      );
+      if (authError || !user) return json({ error: "Unauthorized" }, 401);
+      userId = user.id;
+    }
 
     // ── Parallel: vote history, user profile ──────────────────────────────
     const [voteResult, profileResult] = await Promise.all([
@@ -64,7 +74,7 @@ Deno.serve(async (req) => {
       return json({ generated: false, insights: null, reason: "not_enough_votes" });
     }
 
-    // ── Fetch vote counts for yes_pct ────────────────────────────────────
+    // ── Fetch vote counts for yes_pct ─────────────────────────────────────
     const pollIds = voteRows.map(v => v.poll_id);
     const { data: countRows } = await supabase
       .from("vote_counts")
@@ -93,40 +103,37 @@ Deno.serve(async (req) => {
 
     console.log(`[generate-insights] userId=${userId} votes=${votes.length}`);
 
-    // ── Claude insights prompt (SPEC §6.2) ────────────────────────────────
+    // ── Claude insights prompt ────────────────────────────────────────────
     const anthropic = new Anthropic({
       apiKey: Deno.env.get("ANTHROPIC_API_KEY")!,
     });
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: `You are an insightful but neutral analyst. Given a user's anonymous voting history
-on a debate platform, generate a thoughtful profile of their worldview.
+      max_tokens: 800,
+      system: `You are a sharp, direct analyst. Given anonymous voting data from a debate platform, write a punchy weekly insight about this person's opinion patterns.
 
-Be observational, not judgmental. Avoid labeling people as good or bad.
-Find interesting patterns, tensions, and surprises.
-Write in second person ("You tend to...").
+Be direct. Be specific. Surprise them. Write in second person ("You...").
+No hedging. No filler phrases. Short sentences. Name actual topics they voted on.
+Find the most interesting pattern — not the most obvious one.
 
-Respond ONLY with valid JSON:
+Return ONLY valid JSON:
 {
-  "summary": "3-4 sentence plain English worldview summary",
-  "contrarian_score": 0.0-1.0,
-  "top_insight": "the single most interesting pattern you found",
-  "tension": "any apparent contradiction in their votes (or null)",
-  "demographic_note": "how their votes compare to their declared demographics",
-  "category_breakdown": { "politics": 0.0-1.0, "food": 0.0-1.0 }
+  "summary": "3-4 sentences. Direct worldview summary. Name real topics. No clichés.",
+  "headline": "One sharp sentence — the single most interesting thing about how they vote",
+  "observations": ["2-3 short specific observations about their voting patterns, each under 15 words"],
+  "tension": "The sharpest contradiction in their votes, as one sentence. null if none.",
+  "closer": "One closing line — a question or provocation that makes them think",
+  "contrarian_score": 0.0,
+  "category_breakdown": {}
 }`,
       messages: [
         {
           role: "user",
-          content: `User demographics:
-Age range: ${profile?.age_range ?? "unknown"}
-Region: ${profile?.region ?? "unknown"}
-Declared political lean: ${profile?.political_lean ?? 0} (-2=very liberal, +2=very conservative)
-Gender: ${profile?.gender ?? "unknown"}
+          content: `Demographics:
+Age: ${profile?.age_range ?? "unknown"} | Region: ${profile?.region ?? "unknown"} | Political lean: ${profile?.political_lean ?? 0} (-2=very liberal, +2=very conservative) | Gender: ${profile?.gender ?? "unknown"}
 
-Voting history (${votes.length} votes):
+Voting history (${votes.length} votes, most recent first):
 ${votes.map(v => `- [${v.category}] "${v.question}" → ${v.value === 1 ? "AGREE" : "DISAGREE"} (${v.yes_pct}% agreed globally)`).join("\n")}`,
         },
       ],
@@ -141,10 +148,11 @@ ${votes.map(v => `- [${v.category}] "${v.question}" → ${v.value === 1 ? "AGREE
 
     let parsed: {
       summary: string;
-      contrarian_score: number;
-      top_insight: string;
+      headline: string;
+      observations: string[];
       tension: string | null;
-      demographic_note: string;
+      closer: string;
+      contrarian_score: number;
       category_breakdown: Record<string, number>;
     };
     try {
@@ -154,6 +162,9 @@ ${votes.map(v => `- [${v.category}] "${v.question}" → ${v.value === 1 ? "AGREE
       return json({ generated: false, insights: null, reason: "parse_error" });
     }
 
+    const now = new Date();
+    const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
     // ── UPSERT into user_insights ─────────────────────────────────────────
     const insightRow = {
       user_id: userId,
@@ -162,12 +173,15 @@ ${votes.map(v => `- [${v.category}] "${v.question}" → ${v.value === 1 ? "AGREE
       top_categories: parsed.category_breakdown,
       political_actual: profile?.political_lean ?? null,
       insights_data: {
-        top_insight: parsed.top_insight,
-        tension: parsed.tension,
-        demographic_note: parsed.demographic_note,
+        headline: parsed.headline,
+        observations: parsed.observations ?? [],
+        tension: parsed.tension ?? null,
+        closer: parsed.closer,
         category_breakdown: parsed.category_breakdown,
       },
-      last_generated_at: new Date().toISOString(),
+      last_generated_at: now.toISOString(),
+      week_start_date: weekStart.toISOString(),
+      insight_seen: false,
       vote_count_at_generation: votes.length,
     };
 
@@ -182,25 +196,40 @@ ${votes.map(v => `- [${v.category}] "${v.question}" → ${v.value === 1 ? "AGREE
       return json({ generated: false, insights: null, reason: "db_error" });
     }
 
-    // ── Insight Ready notification (fire-and-forget) ──────────────────────
+    // ── Set insight_badge on user (fire-and-forget) ───────────────────────
     supabase
-      .from('users')
-      .select('expo_push_token')
-      .eq('id', userId)
+      .from("users")
+      .update({ insight_badge: true })
+      .eq("id", userId)
+      .then(() => {})
+      .catch(() => {});
+
+    // ── Push notification (fire-and-forget) ──────────────────────────────
+    supabase
+      .from("users")
+      .select("expo_push_token")
+      .eq("id", userId)
       .maybeSingle()
       .then(({ data: userRow }) => {
         const token = userRow?.expo_push_token;
         if (!token) return;
-        fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-notification`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
-          body: JSON.stringify({ token, body: 'We noticed something interesting about how you vote', data: { type: 'insight_ready' } }),
+        fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-notification`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            token,
+            body: "We noticed something interesting about how you vote",
+            data: { type: "insight_ready" },
+          }),
         });
       })
       .catch(() => {});
 
     console.log(`[generate-insights] done in ${Date.now() - start}ms`);
-    return json({ generated: true, insights: upserted });
+    return json({ generated: true, insight: upserted });
   } catch (err) {
     console.error("[generate-insights]", err);
     return json({ error: "Internal server error" }, 500);

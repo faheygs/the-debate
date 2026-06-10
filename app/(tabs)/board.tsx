@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,12 +12,14 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
 import { useColorScheme } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { usePersonalBoard } from '@/hooks/usePersonalBoard';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { Toast } from '@/components/shared/Toast';
 import { formatGroupLabel, getStateName } from '@/lib/utils';
-import type { UserProfile, BoardStats } from '@/types/database';
+import { supabase } from '@/lib/supabase';
+import type { UserProfile, BoardStats, DbUserInsight } from '@/types/database';
 
 const AMBER = '#C8762A';
 const RING_RADIUS = 20;
@@ -41,6 +43,85 @@ function formatEducation(val: string | null): string | null {
 
 function capitalizeFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function daysAgo(isoDate: string): string {
+  const diff = Math.floor((Date.now() - new Date(isoDate).getTime()) / (1000 * 60 * 60 * 24));
+  if (diff === 0) return 'today';
+  if (diff === 1) return '1 day ago';
+  return `${diff} days ago`;
+}
+
+interface WorldviewCardProps {
+  insight: DbUserInsight | null;
+  joinedAt: string | null;
+}
+function WorldviewCard({ insight, joinedAt }: WorldviewCardProps) {
+  const isNew = insight?.insight_seen === false;
+  const idata = insight?.insights_data;
+
+  if (!insight) {
+    const joinDays = joinedAt
+      ? Math.floor((Date.now() - new Date(joinedAt).getTime()) / (1000 * 60 * 60 * 24))
+      : 0;
+    if (joinDays < 7) {
+      return (
+        <View style={wStyles.card}>
+          <Text style={wStyles.label}>YOUR WEEK</Text>
+          <Text style={wStyles.placeholder}>Your first insight arrives 7 days after joining.</Text>
+        </View>
+      );
+    }
+    return null;
+  }
+
+  return (
+    <View style={wStyles.card}>
+      <View style={wStyles.labelRow}>
+        <Text style={wStyles.label}>YOUR WEEK</Text>
+        {isNew && (
+          <View style={wStyles.newBadge}>
+            <Text style={wStyles.newBadgeText}>NEW</Text>
+          </View>
+        )}
+      </View>
+
+      {idata?.headline ? (
+        <Text style={wStyles.headline}>{idata.headline}</Text>
+      ) : null}
+
+      {insight.worldview_summary ? (
+        <Text style={wStyles.summary}>{insight.worldview_summary}</Text>
+      ) : null}
+
+      {idata?.observations && idata.observations.length > 0 ? (
+        <View style={wStyles.observations}>
+          {idata.observations.map((obs, i) => (
+            <View key={i} style={wStyles.obsRow}>
+              <View style={wStyles.obsDot} />
+              <Text style={wStyles.obsText}>{obs}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {idata?.tension ? (
+        <View style={wStyles.tensionBox}>
+          <Text style={wStyles.tensionText}>{idata.tension}</Text>
+        </View>
+      ) : null}
+
+      {idata?.closer ? (
+        <View style={wStyles.closerWrap}>
+          <Text style={wStyles.closerText}>{idata.closer}</Text>
+        </View>
+      ) : null}
+
+      {insight.last_generated_at ? (
+        <Text style={wStyles.generatedAt}>Generated {daysAgo(insight.last_generated_at)}</Text>
+      ) : null}
+    </View>
+  );
 }
 
 interface RingIndicatorProps { score: number }
@@ -122,6 +203,23 @@ export default function BoardScreen() {
   const { signOut, user } = useAuth();
   const { data, loading, refreshing, error, refetch } = usePersonalBoard();
   const [toast, setToast] = useState<{ message: string; variant: 'error' | 'info' } | null>(null);
+  const queryClient = useQueryClient();
+  const seenMarked = useRef(false);
+
+  // Mark insight as seen when board loads with an unseen insight
+  useEffect(() => {
+    if (seenMarked.current) return;
+    const insight = data?.insights;
+    if (!insight || insight.insight_seen !== false) return;
+    seenMarked.current = true;
+
+    Promise.allSettled([
+      supabase.from('user_insights').update({ insight_seen: true }).eq('user_id', insight.user_id),
+      supabase.from('users').update({ insight_badge: false }).eq('id', insight.user_id),
+    ]).then(() => {
+      queryClient.invalidateQueries({ queryKey: ['insight_badge'] });
+    });
+  }, [data?.insights]);
 
   const onRefresh = () => {
     refetch().catch(() => {
@@ -200,6 +298,12 @@ export default function BoardScreen() {
               <Text style={styles.settingsBtnText}>Settings</Text>
             </TouchableOpacity>
           </View>
+
+          {/* ── WORLDVIEW CARD ──────────────────────────────────────── */}
+          <WorldviewCard
+            insight={data?.insights ?? null}
+            joinedAt={profile?.created_at ?? user?.created_at ?? null}
+          />
 
           {/* ── PROFILE CARD ────────────────────────────────────────── */}
           <View style={styles.profileCard}>
@@ -612,5 +716,124 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     fontSize: 12,
     color: '#444',
+  },
+});
+
+const wStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#161616',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#252525',
+    borderLeftWidth: 3,
+    borderLeftColor: AMBER,
+    padding: 16,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 0,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  label: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 10,
+    color: AMBER,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  newBadge: {
+    backgroundColor: AMBER,
+    borderRadius: 99,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    marginLeft: 8,
+  },
+  newBadgeText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 9,
+    color: '#FFF8F0',
+  },
+  headline: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 17,
+    color: '#F5F5F5',
+    letterSpacing: -0.2,
+    marginBottom: 10,
+  },
+  summary: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 14,
+    color: '#888',
+    lineHeight: 14 * 1.6,
+    marginBottom: 12,
+  },
+  placeholder: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 14,
+    color: '#444',
+    fontStyle: 'italic',
+  },
+  observations: {
+    gap: 6,
+    marginBottom: 6,
+  },
+  obsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  obsDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: AMBER,
+    marginTop: 5,
+    flexShrink: 0,
+  },
+  obsText: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    color: '#777',
+    lineHeight: 13 * 1.5,
+    flex: 1,
+  },
+  tensionBox: {
+    backgroundColor: '#1E1208',
+    borderLeftWidth: 2,
+    borderLeftColor: 'rgba(200,118,42,0.5)',
+    borderRadius: 0,
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginVertical: 8,
+  },
+  tensionText: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  closerWrap: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#1E1E1E',
+  },
+  closerText: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    color: '#555',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  generatedAt: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 10,
+    color: '#333',
+    marginTop: 8,
   },
 });

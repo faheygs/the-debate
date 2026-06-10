@@ -83,11 +83,86 @@ Deno.serve(async (req) => {
       return json({ error: "You have already commented on this poll" }, 409);
     }
 
-    // TODO: Re-enable Claude moderation after beta testing
-    // See SPEC.md section 6.1 for the full moderation prompt
-    const aiDecision: "approved" | "blocked" = "approved";
-    const aiReason: string | null = null;
-    const aiScore: number | null = 0.0;
+    // ── Fetch poll question for moderation context ───────────────────────
+    const { data: pollData } = await supabase
+      .from("polls")
+      .select("question")
+      .eq("id", poll_id)
+      .single();
+    const pollQuestion = pollData?.question ?? "Unknown topic";
+
+    // ── Claude moderation ─────────────────────────────────────────────────
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    console.log("[submit-comment] API key exists:", !!ANTHROPIC_API_KEY);
+    console.log("[submit-comment] API key prefix:", ANTHROPIC_API_KEY?.substring(0, 10));
+
+    let aiDecision: "approved" | "blocked" = "approved";
+    let aiReason: string | null = null;
+    let aiScore = 0;
+
+    if (!ANTHROPIC_API_KEY) {
+      console.error("[submit-comment] ANTHROPIC_API_KEY not set — approving without moderation");
+    } else {
+      try {
+        const moderationResponse = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 200,
+            system: `You moderate opinions on an anonymous debate platform.
+Your job is simple: block genuinely harmful content, approve everything else.
+The bar for blocking is HIGH. Default to approving.
+
+BLOCK if the opinion contains ANY of:
+- Racial, ethnic, sexual, or religious slurs of any kind
+- Direct personal attacks ("fuck you", "you're an idiot", targeted insults)
+- Threats of violence against any person or group
+- Spam: identical repeated text, promotional links, gibberish, random characters
+- Fewer than 5 meaningful words that add no substance
+- Content completely unrelated to the debate topic
+
+APPROVE everything else including:
+- Strong opinions, even offensive or controversial ones
+- Profanity that isn't a targeted personal attack ("this is bullshit" = approve)
+- Short but substantive opinions
+- Unpopular or minority viewpoints
+- Emotional or heated language about the TOPIC not a person
+
+Respond ONLY with valid JSON, no other text:
+{ "decision": "approve" | "block", "reason": "one sentence if blocking, null if approving", "score": 0.0-1.0 }`,
+            messages: [{
+              role: "user",
+              content: `Debate topic: "${pollQuestion}"\n\nOpinion to moderate: "${trimmedContent}"`,
+            }],
+          }),
+        });
+
+        const moderationData = await moderationResponse.json();
+        const moderationText = moderationData.content?.[0]?.text ?? "";
+
+        try {
+          const parsed = JSON.parse(moderationText);
+          aiDecision = parsed.decision === "block" ? "blocked" : "approved";
+          aiReason = parsed.reason ?? null;
+          aiScore = parsed.score ?? 0;
+        } catch {
+          console.warn("[submit-comment] Failed to parse Claude response, approving:", moderationText);
+        }
+      } catch (err) {
+        console.warn("[submit-comment] Claude call failed, approving:", err);
+      }
+    }
+
+    console.log("[submit-comment] Claude decision:", aiDecision, "score:", aiScore);
+
+    if (aiDecision === "blocked") {
+      return json({ approved: false, blocked: true, reason: aiReason }, 200);
+    }
 
     // ── Insert approved comment ───────────────────────────────────────────
     const insertPayload = {
